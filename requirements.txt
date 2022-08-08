@@ -1,0 +1,5 @@
+numpy
+scipy
+pytest
+tensorflow>=2.2
+keras
