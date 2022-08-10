@@ -3,3 +3,5 @@ scipy
 pytest
 tensorflow>=2.2
 keras
+sphinx
+sphinx-rtd-theme

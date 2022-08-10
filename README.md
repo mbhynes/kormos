@@ -1,6 +1,6 @@
 # `kormos`
 
-An [`scipy.optimize.minimize`](https://docs.scipy.org/doc/scipy/reference/generated/scipy.optimize.minimize.html) and [`keras`](https://keras.io/) for training `keras` models with traditional (deterministic) minimization algorithms.
+An interface between [`scipy.optimize.minimize`](https://docs.scipy.org/doc/scipy/reference/generated/scipy.optimize.minimize.html) and [`keras`](https://keras.io/) for training `keras` models with traditional (deterministic) minimization algorithms.
 
 ## Motivation
 
@@ -11,17 +11,18 @@ While Tensorflow is indeed a framework for large-scale deep learning, its expres
   - these algorithms have much faster theoretical convergence to accurate solutions when the dataset is small enough to make computation times feasible
   - deterministic algorithms do not require additional hyperparamter tuning to guarantee convergence (in theory or in practice)
 
-TL;DR: Because Luddites exist even in the field of numerical optimization.
+So TL;DR: because Luddites exist even in the field of numerical optimization.
 
 ## Why The Name Kormos?
 
-The `keras` framework is a powerful and useful tool, and is named after the Greek word *κέρας*, which means *horn*.
+Because `keras` is a powerful and useful tool, and is named after the Greek word *κέρας*, which means *horn*.
 
 This package is related to `keras`, but isn't very powerful or useful. It's named after the Greek word *κορμός*, which means *stump*.
 
 ## Installation
 
 Install via the PyPI package [kormos](https://pypi.org/project/kormos/) using pip:
+
 ```python
 pip3 install kormos
 ```

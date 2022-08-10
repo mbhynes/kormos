@@ -108,12 +108,12 @@ class ScipyFittedModel(keras.Model):
 
     def sigint_handler():
       return scipy.optimize.OptimizeResult(
-        x=factory.get_weights().numpy(),
+        x=factory.get_weights(),
         success=False,
         status=-1,
         message="User aborted optimization",
-        fun=factory.func(factory.get_weights().numpy()),
-        grad=factory.grad(factory.get_weights().numpy()),
+        fun=factory.func(factory.get_weights()),
+        grad=factory.grad(factory.get_weights()),
         nit=self._epoch,
         maxcv=None,
       )
@@ -159,7 +159,7 @@ class ScipyFittedModel(keras.Model):
         factory = factory.build()
         result = scipy.optimize.minimize(
           fun=factory.func,
-          x0=factory.get_weights().numpy(),
+          x0=factory.get_weights(),
           jac=factory.grad,
           hessp=factory.hessp,
           method=config['method'],
@@ -167,7 +167,7 @@ class ScipyFittedModel(keras.Model):
           callback=_scipy_minimize_callback,
         )
         if result.nit == 0:
-          _scipy_minimize_callback(factory.get_weights().numpy())
+          _scipy_minimize_callback(factory.get_weights())
     except KeyboardInterrupt:
       result = sigint_handler()
 
