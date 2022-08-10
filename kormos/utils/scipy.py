@@ -263,7 +263,7 @@ class FunctionFactory:
       reg_loss = self.model.compiled_loss(
         y,
         y,
-        sample_weight=(0 * sample_weight),
+        sample_weight=(0 * y),
         regularization_losses=self.model.losses,
       )
     reg_grad = tape.gradient(reg_loss, self.model.trainable_variables)
@@ -346,7 +346,7 @@ class FunctionFactory:
         reg_loss = self.model.compiled_loss(
           y,
           y,
-          sample_weight=(0 * sample_weight),
+          sample_weight=(0 * y),
           regularization_losses=self.model.losses,
         )
       reg_grad_slices = inner_tape.gradient(reg_loss, self.model.trainable_variables)
