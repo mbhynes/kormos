@@ -258,3 +258,177 @@ class ScipyFittedSequentialModel(keras.Sequential, ScipyFittedModel):
 
   def fit(self, **kwargs):
     ScipyFittedModel.fit(self, **kwargs)
+
+
+class BatchOptimizedModel(keras.Model):
+
+  def compile(self, **kwargs):
+    optimizer_orig = kwargs.pop('optimizer')
+    use_batch_fit = False
+    try:
+      optimizer = keras.optimizers.get(optimizer_orig)
+    except ValueError:
+      # A BatchOptimizer or its str identifier will raise a ValueError,
+      # in which case we know to fit this model using .fit_batch()
+      optimizer = "rmsprop"  # Set a valid default to call .compile() 
+      use_batch_fit = True
+
+    super().compile(optimizer=optimizer, **kwargs)
+    # If we are fitting with a deterministic batch algorithm, reset
+    # the optimizer to the desired one after compilation
+    if use_batch_fit:
+      self.optimizer = kormos.optimizers.get(optimizer_orig)
+      self.fit = self.fit_batch
+
+  @traceback_utils.filter_traceback
+  def fit_batch(
+    self,
+    x=None,
+    y=None,
+    batch_size=None,
+    epochs=20,
+    verbose='auto',
+    callbacks=None,
+    validation_split=0.,
+    validation_data=None,
+    shuffle=False,
+    class_weight=None,
+    sample_weight=None,
+    initial_epoch=0,
+    steps_per_epoch=None,
+    validation_steps=None,
+    validation_batch_size=None,
+    validation_freq=1,
+    max_queue_size=10,
+    workers=1,
+    use_multiprocessing=False,
+    method="L-BFGS-B",
+    options=None,
+    pretrain_fn=None,
+  ):
+    self._assert_compile_was_called()
+    self._check_call_args("fit")
+
+    if verbose == 'auto':
+      if self.distribute_strategy._should_use_with_coordinator:  # pylint: disable=protected-access
+        verbose = 2  # Default to epoch-level logging for PSStrategy.
+      else:
+        verbose = 1  # Default to batch-level logging otherwise.
+
+    if validation_split:
+      # Create the validation data using the training data. Only supported for
+      # `Tensor` and `NumPy` input.
+      (x, y, sample_weight), validation_data = (
+          data_adapter.train_validation_split(
+              (x, y, sample_weight), validation_split=validation_split))
+
+    if validation_data:
+      val_x, val_y, val_sample_weight = (
+          data_adapter.unpack_x_y_sample_weight(validation_data))
+
+    if self.distribute_strategy._should_use_with_coordinator:  # pylint: disable=protected-access
+      self._cluster_coordinator = cluster_coordinator.ClusterCoordinator(
+          self.distribute_strategy)
+
+    # Container that configures and calls `tf.keras.Callback`s.
+    if not isinstance(callbacks, callbacks_module.CallbackList):
+      callbacks = callbacks_module.CallbackList(
+        callbacks,
+        add_history=True,
+        add_progbar=(verbose != 0),
+        model=self,
+        verbose=verbose,
+        epochs=epochs,
+        steps=1,
+      )
+
+    with self.distribute_strategy.scope(), \
+       training_utils.RespectCompiledTrainableState(self):
+
+      # Creates a `tf.data.Dataset` and handles batch and epoch iteration.
+      data_handler = data_adapter.get_data_handler(
+        x=x,
+        y=y,
+        sample_weight=sample_weight,
+        batch_size=batch_size,
+        steps_per_epoch=steps_per_epoch,
+        initial_epoch=initial_epoch,
+        epochs=1,
+        shuffle=shuffle,
+        class_weight=class_weight,
+        max_queue_size=max_queue_size,
+        workers=workers,
+        use_multiprocessing=use_multiprocessing,
+        model=self,
+        steps_per_execution=self._steps_per_execution
+      )
+
+      def _callback(x):
+        self._epoch += 1
+        epoch = self._epoch
+        logs = {
+          'loss': self.optimizer.func(x),
+          'grad': np.linalg.norm(self.optimizer.grad(x)),
+          'fg_evals': self.optimizer.fg_evals,
+          'hessp_evals': self.optimizer.hessp_evals,
+        }
+
+        # Compute metrics on the validation set
+        if validation_data is not None and self._should_eval(epoch, validation_freq):
+          # Create data_handler for evaluation and cache it.
+          if getattr(self, '_eval_data_handler', None) is None:
+            self._eval_data_handler = data_adapter.get_data_handler(
+              x=val_x,
+              y=val_y,
+              sample_weight=val_sample_weight,
+              batch_size=validation_batch_size or batch_size,
+              steps_per_epoch=validation_steps,
+              initial_epoch=0,
+              epochs=1,
+              max_queue_size=max_queue_size,
+              workers=workers,
+              use_multiprocessing=use_multiprocessing,
+              model=self,
+              steps_per_execution=self._steps_per_execution,
+            )
+          val_logs = self.evaluate(
+            x=val_x,
+            y=val_y,
+            sample_weight=val_sample_weight,
+            batch_size=validation_batch_size or batch_size,
+            steps=validation_steps,
+            callbacks=callbacks,
+            max_queue_size=max_queue_size,
+            workers=workers,
+            use_multiprocessing=use_multiprocessing,
+            return_dict=True,
+            _use_cached_eval_dataset=True,
+          )
+          val_logs = {'val_' + name: val for name, val in val_logs.items()}
+          logs.update(val_logs)
+          # try:
+          #   val_logs = {
+          #     "val_" + name: val for (name, val) in self.test_step(validation_data).items()
+          #   }
+          # except Exception as e:
+          #   print(e)
+
+        callbacks.on_train_batch_end(epoch, logs)
+        callbacks.on_epoch_end(epoch, logs)
+
+        callbacks.on_epoch_begin(epoch + 1)
+        callbacks.on_train_batch_begin(epoch + 1)
+
+    logs = None
+    self._epoch = 0
+    callbacks.on_train_begin()
+    callbacks.on_epoch_begin(self._epoch)
+    callbacks.on_train_batch_begin(self._epoch)
+
+    self.optimizer.build(model=self, Xyw=data_handler._dataset)
+    result = self.optimizer.minimize(
+      callback=_callback,
+    )
+    self.optimizer.set_weights(result.x)
+    callbacks.on_train_end(logs=logs)
+    return self.history

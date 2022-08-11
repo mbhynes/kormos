@@ -1,7 +1,6 @@
 # MIT License
 #
 # Copyright (c) 2022 Michael B Hynes
-# Copyright (c) 2019 Pi-Yueh Chuang <pychuang@gwu.edu>
 #
 # Permission is hereby granted, free of charge, to any person obtaining a copy
 # of this software and associated documentation files (the "Software"), to deal
@@ -21,31 +20,29 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 
-
 import logging
-from copy import deepcopy
 
 import numpy as np
 import scipy
+from scipy.optimize._minimize import MINIMIZE_METHODS
 
 import tensorflow as tf
-from tensorflow.python.platform import tf_logging
-from tensorflow.python.keras.engine import data_adapter
 from tensorflow import keras
-
-from keras.utils import traceback_utils
-from keras import callbacks as callbacks_module
+from tensorflow.python.keras.engine import data_adapter
+from keras.optimizers.optimizer_v2.optimizer_v2 import OptimizerV2
 
 from kormos.utils.cache import OptimizationStateCache
 
 logger = logging.getLogger(__name__)
 
 
-class FunctionFactory:
+
+class BatchOptimizer(OptimizerV2):
   """
-  A factory to create callables for `scipy.optimize.minimize <https://docs.scipy.org/doc/scipy/reference/generated/scipy.optimize.minimize.html>`_.
+  An Optimizer to create callables for deterministic batch optimization algorithms,
+  such as provided by `scipy.optimize.minimize <https://docs.scipy.org/doc/scipy/reference/generated/scipy.optimize.minimize.html>`_.
   
-  The `optimize.minimize` routine has the following abbreviated signature:
+  A minimization routine, such as in `scipy`, typically has the following abbreviated signature:
   
   .. code-block:: python
 
@@ -63,10 +60,17 @@ class FunctionFactory:
   - `jac`, in the method `grad(x)` or `func_and_grad(x)`
   - `hessp`, in the method `hessp(x, vector)`
   """
-
-  def __init__(self, model, Xyw, dtype=keras.backend.floatx(), batch_size=2**12, max_cache_entries=5):
+  
+  def __init__(self,
+    name="batchoptimizer", 
+    dtype=keras.backend.floatx(),
+    batch_size=2**12,
+    max_cache_entries=5,
+    **kwargs
+  ):
     """
-    Construct a `FunctionFactory` object, but do not build it.
+    Construct a `BatchOptimizer` object, but do not build it.
+    The `optimizer.build(...)` method must be called by the model's `.fit`.
 
     Please note that the `dtype` may be explicitly specified, and in general
     `tensorflow.float64` will make the optimization routine more numerically robust
@@ -85,39 +89,22 @@ class FunctionFactory:
     like Newton-CG the evaluation of `hessp`
 
     Args:
-      model (tesorflow.keras.Model): a model instance for which to optimize parameters
-      Xyw (tensorflow.data.Dataset): a training dataset
       dtype: the `tensorflow dtype` to use for weight matrices, defaults to `keras.backend.floatx()`.
-      batch_size (int): the number of training examples to process in a single "batch"      max_cache_entries (int): the number of previous `loss/gradient/hessp` values to cache during training
+      batch_size (int): the number of training examples to process in a single "batch"
+      max_cache_entries (int): the number of previous `loss/gradient/hessp` values to cache during training
     """
-    if not issubclass(type(model.loss), keras.losses.Loss):
-      raise ValueError(
-        f"Provided model.loss={model.loss} is type: {type(model.loss)}, but a keras.losses.Loss is required"
-      )
-    if model.loss.reduction != keras.losses.Reduction.SUM:
-      raise ValueError(
-        f"Provided model.loss.reduction = {model.loss.reduction}, "
-        f"but should be: keras.losses.Reduction.SUM (={keras.losses.Reduction.SUM})"
-      )
+    super().__init__(name=name, **kwargs)
 
-    self.model = model
-    if not issubclass(type(Xyw), tf.data.Dataset):
-      logger.warning(f"Provided type of Xyw is '{type(Xyw)}; creating a data adapter with batch_size {batch_size}")
-      Xyw = data_adapter.get_data_handler(x=Xyw, model=model, batch_size=batch_size)._dataset
-      logger.warning(f"Converted input data to {type(Xyw)}")
-
-    self.Xyw = Xyw
     self.dtype = dtype
     self.batch_size = batch_size
 
-    self.n = Xyw.cardinality().numpy()
     self._built = False
     self.cache = OptimizationStateCache(max_entries=max_cache_entries)
     self.k = 0
     self.fg_evals = 0
     self.hessp_evals = 0
 
-  def build(self):
+  def build(self, model, Xyw):
     """
     Dynamically build this `FunctionFactory` object to prepare its use in a
     optimization routine for parameter fitting.
@@ -130,31 +117,54 @@ class FunctionFactory:
     `code <https://gist.github.com/piyueh/712ec7d4540489aad2dcfb80f9a54993>`_,
     and this file retains the original 2019 copyright notice above.
 
+    Aggs:
+      model (keras.Model): the model to be optimized
+      Xyw (tensorflow.data.Dataset): the training dataset for optimization. If a type other
+        than `Dataset` is provided, this method will attempt to create one.
     Returns:
-      FunctionFactory: this
+      this
     """
-    # obtain the shapes of all trainable parameters in the model
-    model = self.model
-    shapes = tf.shape_n(model.trainable_weights)
-    n_tensors = len(shapes)
+    def _build_weight_indices():
+      # obtain the shapes of all trainable parameters in the model
+      shapes = tf.shape_n(model.trainable_weights)
+      n_tensors = len(shapes)
 
-    # we'll use tf.dynamic_stitch and tf.dynamic_partition later, so we need to
-    # prepare required information first
-    idx_end = 0
-    idx = [] # stitch indices
-    part = [] # partition indices
+      # we'll use tf.dynamic_stitch and tf.dynamic_partition later, so we need to
+      # prepare required information first
+      idx_end = 0
+      idx = [] # stitch indices
+      part = [] # partition indices
 
-    for part_num, shape in enumerate(shapes):
-      num_elements = np.product(shape)
-      idx_start = idx_end
-      idx_end = idx_start + num_elements
-      idx.append(tf.reshape(tf.range(idx_start, idx_end, dtype=tf.int32), shape))
-      part.extend(num_elements * [part_num])
+      for part_num, shape in enumerate(shapes):
+        num_elements = np.product(shape)
+        idx_start = idx_end
+        idx_end = idx_start + num_elements
+        idx.append(tf.reshape(tf.range(idx_start, idx_end, dtype=tf.int32), shape))
+        part.extend(num_elements * [part_num])
 
-    self.part = tf.constant(part)
-    self.idx = idx
-    self.shapes = shapes
-    self.n_tensors = n_tensors
+      self.part = tf.constant(part)
+      self.idx = idx
+      self.shapes = shapes
+      self.n_tensors = n_tensors
+
+    if not issubclass(type(model.loss), keras.losses.Loss):
+      raise ValueError(
+        f"Provided model.loss={model.loss} is type: {type(model.loss)}, but a keras.losses.Loss is required"
+      )
+    if model.loss.reduction != keras.losses.Reduction.SUM:
+      raise ValueError(
+        f"Provided model.loss.reduction = {model.loss.reduction}, "
+        f"but should be: keras.losses.Reduction.SUM (={keras.losses.Reduction.SUM})"
+      )
+    if not issubclass(type(Xyw), tf.data.Dataset):
+      logger.warning(f"Provided type of Xyw is '{type(Xyw)}; creating a data adapter with batch_size {batch_size}")
+      Xyw = data_adapter.get_data_handler(x=Xyw, model=model, batch_size=batch_size)._dataset
+      logger.warning(f"Converted input data to {type(Xyw)}")
+
+    self.model = model
+    self.Xyw = Xyw
+    self.n = Xyw.cardinality().numpy()
+    _build_weight_indices()
     self._built = True
     return self
 
@@ -356,3 +366,100 @@ class FunctionFactory:
 
     total_weight = np.sum(batch_weights)
     return hvp / total_weight + reg_hvp
+
+  def minimize(self, epochs=1, callback=None, pretrain_fn=None, **kwargs):
+    raise NotImplementedError
+
+
+class ScipyBatchOptimizer(BatchOptimizer):
+
+  DEFAULT_METHOD = "L-BFGS-B"
+
+  def __init__(self, name="scipy", method=None, **kwargs):
+    if method is not None and method not in MINIMIZE_METHODS:
+      raise ValueError(f"Provided method {method} is not in {MINIMIZE_METHODS}")
+    self.method = method
+    super().__init__(name=name, **kwargs)
+
+  def minimize(self, epochs=1, callback=None, pretrain_fn=None, method=None, options=None):
+    assert self._built
+
+    # Convert scalars to lists to allow for a suite of optimization methods to be applied successively
+    epochs = epochs if type(epochs) is list else [epochs]
+    options = options if type(options) is list else len(epochs) * [options or {}]
+    method = method if type(method) is list else len(epochs) * [method or self.DEFAULT_METHOD]
+    pretrain_fn = pretrain_fn if type(pretrain_fn) is list else len(epochs) * [pretrain_fn]
+
+    # Create a list of config dicts to pass to scipy.optimize.minimize successively
+    minimize_configs = []
+    for k, e in enumerate(epochs):
+      config = {
+        'options': deepcopy(options[k]),
+        'method': method[k],
+        'pretrain_fn': pretrain_fn[k],
+      }
+      config['options']['maxiter'] = e
+      minimize_configs.append(config)
+
+    def sigint_handler():
+      x = self.get_weights()
+      return scipy.optimize.OptimizeResult(
+        x=x,
+        success=False,
+        status=-1,
+        message="User aborted optimization",
+        fun=self.func(x),
+        grad=self.grad(x),
+        nit=-1,
+        maxcv=None,
+      )
+
+    try:
+      for config in minimize_configs:
+        if callable(config['pretrain_fn']):
+          config['pretrain_fn'](self.model)
+          # Rebuild the optimize in case the pretrain_fn has modified the model
+          self.build(self.model, self.Xyw)
+
+        result = scipy.optimize.minimize(
+          fun=self.func,
+          x0=self.get_weights(),
+          jac=self.grad,
+          hessp=self.hessp,
+          method=config['method'],
+          options=config['options'],
+          callback=callback,
+        )
+        self.set_weights(result.x)
+        if result.nit == 0:
+          callback(self.get_weights())
+    # This is an advanced implementeation of early stopping combined
+    # with "human in the loop" interative machine learning.
+    except KeyboardInterrupt:
+      result = sigint_handler()
+
+    return result
+
+
+OPTIMIZER_IDENTIFIER_MAP = dict(**{
+  'scipy': (ScipyBatchOptimizer, (), {}),
+}, **{
+  method.lower(): (ScipyBatchOptimizer, (), {'name': method.lower(), 'method': method}) 
+  for method in MINIMIZE_METHODS
+}, **{
+  method.upper(): (ScipyBatchOptimizer, (), {'name': method.lower(), 'method': method}) 
+  for method in MINIMIZE_METHODS
+})
+
+
+def get(identifier):
+  if isinstance(identifier, BatchOptimizer):
+    return identifier
+  if isinstance(identifier, str):
+    if identifier not in OPTIMIZER_IDENTIFIER_MAP:
+      raise ValueError(
+        f"Provided identifier='{identifier}' is a valid string. Allowed values: {list(OPTIMIZER_IDENTIFIER_MAP.keys())}"
+      )
+    (cls, args, kwargs) = OPTIMIZER_IDENTIFIER_MAP[identifier]
+    return cls(*args, **kwargs)
+  raise ValueError(f"Could not interpret optimizer identifier: {identifier}") 

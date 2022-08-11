@@ -5,7 +5,7 @@ from tensorflow import keras
 from tensorflow.keras.regularizers import L1, L2
 from tensorflow.python.keras.engine import data_adapter
 
-from kormos.model import ScipyFittedModel, ScipyFittedSequentialModel
+from kormos.models import ScipyFittedModel, ScipyFittedSequentialModel
 
 
 class TestScipyFittedModel:
@@ -34,7 +34,7 @@ class TestScipyFittedModel:
     return model, dataset
 
   def test_fit_ols(self):
-    rank = 10
+    rank = 5
     model, dataset = self._build_ols_model(rank)
     model.fit(x=dataset, method='L-BFGS-B', epochs=10, options={'gtol': 1e-9, 'ftol': 1e-6})
     expected = 1 + np.arange(rank)
