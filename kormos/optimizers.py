@@ -20,6 +20,7 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 
+from copy import deepcopy
 import logging
 
 import numpy as np
@@ -34,7 +35,6 @@ from keras.optimizers.optimizer_v2.optimizer_v2 import OptimizerV2
 from kormos.utils.cache import OptimizationStateCache
 
 logger = logging.getLogger(__name__)
-
 
 
 class BatchOptimizer(OptimizerV2):

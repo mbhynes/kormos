@@ -93,7 +93,7 @@ class TestBatchOptimizer(object):
   def test_grad_analytic(self):
     rank = 3
     model, dataset = self._build_ols_model(rank)
-    factory = BatchOptimizer( 
+    optimizer = BatchOptimizer( 
       dtype=tf.dtypes.float64,
       batch_size=1,
     ).build(model, dataset)
@@ -105,7 +105,7 @@ class TestBatchOptimizer(object):
     print(X, y)
 
     # Retrieve the model weights, which should be the same as the all-ones initial values
-    w = factory.get_weights()
+    w = optimizer.get_weights()
     assert w.sum() == len(w)
     bias = 0.0
     y_pred = X.dot(w) + bias 
@@ -115,42 +115,42 @@ class TestBatchOptimizer(object):
     expected_grad = (2 / n) * X.T.dot(y_pred - y) + 2 * (reg_coeff * w)
     expected_hess = (2 / n) * X.T.dot(X) + 2 * reg_coeff * np.eye(rank)
 
-    assert factory.func(w) == expected_loss, f"factory.func(w) = {factory.func(w)} != expected = {expected_loss}"
-    assert np.allclose(factory.grad(w), expected_grad), f"factory.grad = {factory.grad(w)} did not match expected = {expected_grad}"
+    assert optimizer.func(w) == expected_loss, f"optimizer.func(w) = {optimizer.func(w)} != expected = {expected_loss}"
+    assert np.allclose(optimizer.grad(w), expected_grad), f"optimizer.grad = {optimizer.grad(w)} did not match expected = {expected_grad}"
     for k in range(rank):
       p = np.eye(rank)[k]
       assert np.allclose(
-        factory.hessp(w, p),
+        optimizer.hessp(w, p),
         expected_hess[:, k],
-      ), f"factory.hessp for {p} = {factory.hessp(w, p)} did not match expected = {expected_hess[:, k]}"
+      ), f"optimizer.hessp for {p} = {optimizer.hessp(w, p)} did not match expected = {expected_hess[:, k]}"
 
   def test_grad_numeric(self):
     tol = 1e-4
     model, dataset = self._build_mlp_model()
-    factory = BatchOptimizer( 
+    optimizer = BatchOptimizer( 
       dtype=tf.dtypes.float64,
       batch_size=2,
     ).build(model, dataset)
-    x = np.array(0 * factory.get_weights() + 1.0, dtype=np.float64)
-    err = opt.check_grad(factory.func, factory.grad, x)
+    x = np.array(0 * optimizer.get_weights() + 1.0, dtype=np.float64)
+    err = opt.check_grad(optimizer.func, optimizer.grad, x)
     if err > tol:
-      g_approx = opt.approx_fprime(x, factory.func, epsilon=1e-7)
-      g = factory.grad(x)
+      g_approx = opt.approx_fprime(x, optimizer.func, epsilon=1e-7)
+      g = optimizer.grad(x)
       assert err <= tol, f"Analytical gradient and numerical gradient differ by {err} > {tol}:\n grad: {g}\ngrad_approx: {g_approx}"
 
   def test_hessp_numeric(self):
     tol = 1e-4
     model, dataset = self._build_mlp_model()
-    factory = BatchOptimizer( 
+    optimizer = BatchOptimizer( 
       dtype=tf.dtypes.float64,
       batch_size=2,
     ).build(model, dataset)
-    x = np.array(0 * factory.get_weights() + 1.0, dtype=np.float64)
+    x = np.array(0 * optimizer.get_weights() + 1.0, dtype=np.float64)
 
     def _hess(x):
       n = len(x)
       H = np.zeros((n, n))
-      grad = lambda x: opt.approx_fprime(x, factory.func, epsilon=1e-5)
+      grad = lambda x: opt.approx_fprime(x, optimizer.func, epsilon=1e-5)
       for k in range(n):
         h_approx = opt.approx_fprime(x, lambda x: grad(x)[k], epsilon=1e-5)
         H[k, :] = h_approx
@@ -161,7 +161,7 @@ class TestBatchOptimizer(object):
     for k in range(len(p)):
       p[k] = 1
       Hp = H.dot(p)
-      hessp = factory.hessp(x, p)
+      hessp = optimizer.hessp(x, p)
       assert np.allclose(Hp, hessp, atol=1e-2), f"hessp does not match numerical evaluation for k={k}:\nhessp:{hessp}\napprox: {Hp}"
       p[k] = 0
 
@@ -194,11 +194,11 @@ class TestScipyBatchOptimizer(object):
   def test_fit_ols(self):
     rank = 5
     model, dataset = self._build_ols_model(rank)
-    factory = BatchOptimizer( 
+    optimizer = ScipyBatchOptimizer( 
       dtype=tf.dtypes.float64,
       batch_size=2,
     ).build(model, dataset)
-    result = factor.minimize(method='L-BFGS-B', epochs=10, options={'gtol': 1e-9, 'ftol': 1e-6})
+    result = optimizer.minimize(method='L-BFGS-B', epochs=10, options={'gtol': 1e-9, 'ftol': 1e-6})
     expected = 1 + np.arange(rank)
     actual = np.reshape(model.trainable_weights[0], (1, -1))
     assert np.allclose(actual, expected, atol=0.01, rtol=0), \
