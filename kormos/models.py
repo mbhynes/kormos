@@ -36,6 +36,8 @@ from tensorflow.python.keras.engine import data_adapter
 from tensorflow.python.keras.engine import training_utils
 from keras import callbacks as callbacks_module
 
+import kormos
+import kormos.optimizers
 from kormos.utils.scipy import FunctionFactory
 
 logger = logging.getLogger(__name__)
@@ -263,10 +265,11 @@ class ScipyFittedSequentialModel(keras.Sequential, ScipyFittedModel):
 class BatchOptimizedModel(keras.Model):
 
   def compile(self, **kwargs):
-    optimizer_orig = kwargs.pop('optimizer')
+    optimizer_orig = kwargs.pop("optimizer", "rmsprop")
     use_batch_fit = False
     try:
       optimizer = keras.optimizers.get(optimizer_orig)
+      logger.warning(f"BatchOptimizedModel compiled with optimizer={optimizer}.")
     except ValueError:
       # A BatchOptimizer or its str identifier will raise a ValueError,
       # in which case we know to fit this model using .fit_batch()
@@ -282,32 +285,36 @@ class BatchOptimizedModel(keras.Model):
 
   @traceback_utils.filter_traceback
   def fit_batch(
-    self,
-    x=None,
-    y=None,
-    batch_size=None,
-    epochs=20,
-    verbose='auto',
-    callbacks=None,
-    validation_split=0.,
-    validation_data=None,
-    shuffle=False,
-    class_weight=None,
-    sample_weight=None,
-    initial_epoch=0,
-    steps_per_epoch=None,
-    validation_steps=None,
-    validation_batch_size=None,
-    validation_freq=1,
-    max_queue_size=10,
-    workers=1,
-    use_multiprocessing=False,
-    method="L-BFGS-B",
-    options=None,
-    pretrain_fn=None,
-  ):
+      self,
+      x=None,
+      y=None,
+      batch_size=None,
+      epochs=20,
+      verbose='auto',
+      callbacks=None,
+      validation_split=0.,
+      validation_data=None,
+      shuffle=False,
+      class_weight=None,
+      sample_weight=None,
+      initial_epoch=0,
+      steps_per_epoch=None,
+      validation_steps=None,
+      validation_batch_size=None,
+      validation_freq=1,
+      max_queue_size=10,
+      workers=1,
+      use_multiprocessing=False,
+      pretrain_fn=None,
+      **kwargs
+    ):
     self._assert_compile_was_called()
     self._check_call_args("fit")
+    if batch_size is not None:
+      logger.warning(
+        f"batch_size={batch_size} was provided; this will override the setting:"
+        f"BatchOptimizedModel.optimizer.batch_size={BatchOptimizedModel.optimizer.batch_size}."
+      )
 
     if verbose == 'auto':
       if self.distribute_strategy._should_use_with_coordinator:  # pylint: disable=protected-access
@@ -350,8 +357,8 @@ class BatchOptimizedModel(keras.Model):
         x=x,
         y=y,
         sample_weight=sample_weight,
-        batch_size=batch_size,
-        steps_per_epoch=steps_per_epoch,
+        batch_size=batch_size or self.optimizer.batch_size,
+        steps_per_epoch=None,
         initial_epoch=initial_epoch,
         epochs=1,
         shuffle=shuffle,
@@ -381,7 +388,7 @@ class BatchOptimizedModel(keras.Model):
               x=val_x,
               y=val_y,
               sample_weight=val_sample_weight,
-              batch_size=validation_batch_size or batch_size,
+              batch_size=validation_batch_size or batch_size or self.optimizer.batch_size,
               steps_per_epoch=validation_steps,
               initial_epoch=0,
               epochs=1,
@@ -395,7 +402,7 @@ class BatchOptimizedModel(keras.Model):
             x=val_x,
             y=val_y,
             sample_weight=val_sample_weight,
-            batch_size=validation_batch_size or batch_size,
+            batch_size=validation_batch_size or batch_size or self.optimizer.batch_size,
             steps=validation_steps,
             callbacks=callbacks,
             max_queue_size=max_queue_size,
@@ -427,8 +434,15 @@ class BatchOptimizedModel(keras.Model):
 
     self.optimizer.build(model=self, Xyw=data_handler._dataset)
     result = self.optimizer.minimize(
+      epochs=epochs,
       callback=_callback,
+      pretrain_fn=pretrain_fn,
+      **kwargs
     )
     self.optimizer.set_weights(result.x)
     callbacks.on_train_end(logs=logs)
     return self.history
+
+
+class BatchOptimizedSequentialModel(keras.models.Sequential, BatchOptimizedModel):
+  pass

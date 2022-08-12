@@ -30,14 +30,13 @@ from scipy.optimize._minimize import MINIMIZE_METHODS
 import tensorflow as tf
 from tensorflow import keras
 from tensorflow.python.keras.engine import data_adapter
-from keras.optimizers.optimizer_v2.optimizer_v2 import OptimizerV2
 
 from kormos.utils.cache import OptimizationStateCache
 
 logger = logging.getLogger(__name__)
 
 
-class BatchOptimizer(OptimizerV2):
+class BatchOptimizer(object):
   """
   An Optimizer to create callables for deterministic batch optimization algorithms,
   such as provided by `scipy.optimize.minimize <https://docs.scipy.org/doc/scipy/reference/generated/scipy.optimize.minimize.html>`_.
@@ -66,7 +65,6 @@ class BatchOptimizer(OptimizerV2):
     dtype=keras.backend.floatx(),
     batch_size=2**12,
     max_cache_entries=5,
-    **kwargs
   ):
     """
     Construct a `BatchOptimizer` object, but do not build it.
@@ -93,8 +91,7 @@ class BatchOptimizer(OptimizerV2):
       batch_size (int): the number of training examples to process in a single "batch"
       max_cache_entries (int): the number of previous `loss/gradient/hessp` values to cache during training
     """
-    super().__init__(name=name, **kwargs)
-
+    self.name = name
     self.dtype = dtype
     self.batch_size = batch_size
 
@@ -157,8 +154,8 @@ class BatchOptimizer(OptimizerV2):
         f"but should be: keras.losses.Reduction.SUM (={keras.losses.Reduction.SUM})"
       )
     if not issubclass(type(Xyw), tf.data.Dataset):
-      logger.warning(f"Provided type of Xyw is '{type(Xyw)}; creating a data adapter with batch_size {batch_size}")
-      Xyw = data_adapter.get_data_handler(x=Xyw, model=model, batch_size=batch_size)._dataset
+      logger.warning(f"Provided type of Xyw is '{type(Xyw)}; creating a data adapter with batch_size={self.batch_size}")
+      Xyw = data_adapter.get_data_handler(x=Xyw, model=model, batch_size=self.batch_size)._dataset
       logger.warning(f"Converted input data to {type(Xyw)}")
 
     self.model = model
@@ -203,7 +200,9 @@ class BatchOptimizer(OptimizerV2):
       numpy.ndarray: vector of parameters used by `scipy.optimize.minimize`
     """
     assert self._built
-    return self._tensors_to_numpy(self.model.trainable_variables)
+    x = self._tensors_to_numpy(self.model.trainable_variables)
+    assert type(x) is np.ndarray
+    return x
 
   @tf.function
   def set_weights(self, x, model=None):
@@ -214,6 +213,11 @@ class BatchOptimizer(OptimizerV2):
       x: a `numpy.ndarray` (or similar iterable) parameter vector
     """
     assert self._built
+    if type(x) is tf.Tensor:
+      logger.warning(f"set_weights(x) received non-ndarray argument {x}")
+      x = tf.cast(x, self.dtype)
+    elif type(x) is np.ndarray:
+      x = x.astype(self.dtype.as_numpy_dtype())
     if model is None:
       model = self.model
     params = tf.dynamic_partition(
@@ -222,7 +226,9 @@ class BatchOptimizer(OptimizerV2):
       self.n_tensors,
     )
     for i, (shape, param) in enumerate(zip(self.shapes, params)):
-      model.trainable_variables[i].assign(tf.reshape(param, shape))
+      model.trainable_variables[i].assign(
+        tf.cast(tf.reshape(param, shape), model.trainable_variables[i].dtype)
+      )
 
   @OptimizationStateCache.cached(key='fg')
   def func_and_grad(self, x):
@@ -247,7 +253,10 @@ class BatchOptimizer(OptimizerV2):
     batch_weights = []
     num_batches = None
 
-    for k, data in enumerate(self.Xyw.batch(self.batch_size)):
+    # print("Xyw=", self.Xyw)
+    # print(self.Xyw.__dict__)
+    # print("Xyw.batch()=", self.Xyw.batch(10))
+    for k, data in enumerate(self.Xyw):
       data = data_adapter.expand_1d(data)
       x, y, sample_weight = data_adapter.unpack_x_y_sample_weight(data)
       num_samples = len(x)
@@ -328,7 +337,7 @@ class BatchOptimizer(OptimizerV2):
     batch_weights = []
     num_batches = None
 
-    for k, data in enumerate(self.Xyw.batch(self.batch_size)):
+    for k, data in enumerate(self.Xyw):
       data = data_adapter.expand_1d(data)
       x, y, sample_weight = data_adapter.unpack_x_y_sample_weight(data)
       num_samples = len(x)

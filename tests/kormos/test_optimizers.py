@@ -39,61 +39,72 @@ def test_get():
   assert type(kopt.get('L-BFGS-B')) is ScipyBatchOptimizer
   assert type(kopt.get('l-bfgs-b')) is ScipyBatchOptimizer
 
+def _build_ols_model(
+  rank=3,
+  X=None, 
+  sample_weight=None,
+  weights=None,
+  num_samples=1000,
+  reg_coeff=0.1,
+  cls=keras.models.Sequential,
+):
+  w = weights if weights is not None else (1.0 + np.arange(rank))
+  X = X if X is not None else np.random.normal(size=(num_samples, rank))
+  y = X.dot(w)
+  sample_weight = sample_weight if sample_weight is not None else np.ones(len(X))
+  dataset = tf.data.Dataset.from_tensor_slices(
+    tensors=(tf.convert_to_tensor(X), tf.convert_to_tensor(y), tf.convert_to_tensor(sample_weight))
+  )
+
+  model = cls()
+  model.add(keras.layers.Dense(
+    units=1,
+    input_shape=(rank,),
+    activation=None,
+    use_bias=False,
+    kernel_regularizer=L2(reg_coeff),
+    kernel_initializer="ones",
+  ))
+  model.compile(loss=keras.losses.MeanSquaredError(reduction=keras.losses.Reduction.SUM), optimizer="adam")
+  return model, dataset
+
+def _build_mlp_model(train_size=(10, 3)):
+  w = np.random.normal(size=train_size[-1])
+  X = tf.convert_to_tensor(np.random.normal(size=train_size), dtype=tf.dtypes.float64)
+  y = tf.convert_to_tensor((X.numpy().dot(w) > 0.25).astype(int), dtype=tf.dtypes.float64)
+  dataset = tf.data.Dataset.from_tensor_slices(tensors=(X, y))
+
+  model = keras.models.Sequential()
+  model.add(keras.layers.Dense(
+    units=3,
+    input_shape=(train_size[-1],),
+    activation='sigmoid',
+    use_bias=False,
+    kernel_regularizer=L1(1e-1),
+    kernel_initializer="ones",
+  ))
+  model.add(keras.layers.Dense(
+    units=1,
+    activation='sigmoid',
+    use_bias=False,
+    kernel_regularizer=L2(1e-1),
+    kernel_initializer="ones",
+  ))
+  model.compile(loss=keras.losses.BinaryCrossentropy(reduction=keras.losses.Reduction.SUM), optimizer="adam")
+  return model, dataset
+
 
 class TestBatchOptimizer(object):
 
   keras.backend.set_floatx("float64")
 
-  def _build_ols_model(self, rank=3):
-    w = 1 + np.arange(rank)
-    X = np.ones(shape=(2, rank))
-    y = X.dot(w)
-    sample_weight = np.array([4.0, 3.0]) # different weights, but should be normalized out
-    dataset = tf.data.Dataset.from_tensor_slices(
-      tensors=(tf.convert_to_tensor(X), tf.convert_to_tensor(y), tf.convert_to_tensor(sample_weight))
-    )
-
-    model = keras.models.Sequential()
-    model.add(keras.layers.Dense(
-      units=1,
-      input_shape=(rank,),
-      activation=None,
-      use_bias=False,
-      kernel_regularizer=L2(1e-1),
-      kernel_initializer="ones",
-    ))
-    model.compile(loss=keras.losses.MeanSquaredError(reduction=keras.losses.Reduction.SUM), optimizer="adam")
-    return model, dataset
-
-  def _build_mlp_model(self, train_size=(10, 3)):
-    w = np.random.normal(size=train_size[-1])
-    X = tf.convert_to_tensor(np.random.normal(size=train_size), dtype=tf.dtypes.float64)
-    y = tf.convert_to_tensor((X.numpy().dot(w) > 0.25).astype(int), dtype=tf.dtypes.float64)
-    dataset = tf.data.Dataset.from_tensor_slices(tensors=(X, y))
-
-    model = keras.models.Sequential()
-    model.add(keras.layers.Dense(
-      units=3,
-      input_shape=(train_size[-1],),
-      activation='sigmoid',
-      use_bias=False,
-      kernel_regularizer=L1(1e-1),
-      kernel_initializer="ones",
-    ))
-    model.add(keras.layers.Dense(
-      units=1,
-      activation='sigmoid',
-      use_bias=False,
-      kernel_regularizer=L2(1e-1),
-      kernel_initializer="ones",
-    ))
-    model.compile(loss=keras.losses.BinaryCrossentropy(reduction=keras.losses.Reduction.SUM), optimizer="adam")
-    return model, dataset
-
   def test_grad_analytic(self):
     rank = 3
-    model, dataset = self._build_ols_model(rank)
-    optimizer = BatchOptimizer( 
+    w_true = 1.0 + np.arange(rank)
+    model, dataset = _build_ols_model(
+      rank, weights=w_true, X=np.ones((2, rank)), sample_weight=[4., 3.],
+    )
+    optimizer = BatchOptimizer(
       dtype=tf.dtypes.float64,
       batch_size=1,
     ).build(model, dataset)
@@ -102,13 +113,11 @@ class TestBatchOptimizer(object):
     rows = list(dataset.as_numpy_iterator())
     X = np.array([r[0] for r in rows])
     y = np.array([r[1] for r in rows])
-    print(X, y)
 
-    # Retrieve the model weights, which should be the same as the all-ones initial values
-    w = optimizer.get_weights()
-    assert w.sum() == len(w)
+    # Evaluate the expected values and the model at w = [1, 1, 1]
+    w = np.ones(rank)
     bias = 0.0
-    y_pred = X.dot(w) + bias 
+    y_pred = X.dot(w) + bias
     reg_coeff = 0.1
     n = X.shape[0]
     expected_loss = (1 / n) * (y - y_pred).dot(y - y_pred) + reg_coeff * w.dot(w)
@@ -126,8 +135,8 @@ class TestBatchOptimizer(object):
 
   def test_grad_numeric(self):
     tol = 1e-4
-    model, dataset = self._build_mlp_model()
-    optimizer = BatchOptimizer( 
+    model, dataset = _build_mlp_model()
+    optimizer = BatchOptimizer(
       dtype=tf.dtypes.float64,
       batch_size=2,
     ).build(model, dataset)
@@ -140,8 +149,8 @@ class TestBatchOptimizer(object):
 
   def test_hessp_numeric(self):
     tol = 1e-4
-    model, dataset = self._build_mlp_model()
-    optimizer = BatchOptimizer( 
+    model, dataset = _build_mlp_model()
+    optimizer = BatchOptimizer(
       dtype=tf.dtypes.float64,
       batch_size=2,
     ).build(model, dataset)
@@ -155,7 +164,7 @@ class TestBatchOptimizer(object):
         h_approx = opt.approx_fprime(x, lambda x: grad(x)[k], epsilon=1e-5)
         H[k, :] = h_approx
       return H
-      
+
     H = _hess(x)
     p = np.zeros(len(x))
     for k in range(len(p)):
@@ -170,36 +179,32 @@ class TestScipyBatchOptimizer(object):
 
   keras.backend.set_floatx("float64")
 
-  def _build_ols_model(self, rank=3, num_samples=1000):
-    w = 1 + np.arange(rank)
-    X = np.random.normal(size=(num_samples, rank))
-    y = X.dot(w)
-    sample_weight = np.ones(len(X))
-    dataset = tf.data.Dataset.from_tensor_slices(
-      tensors=(tf.convert_to_tensor(X), tf.convert_to_tensor(y), tf.convert_to_tensor(sample_weight))
-    )
-
-    model = keras.models.Sequential()
-    model.add(keras.layers.Dense(
-      units=1,
-      input_shape=(rank,),
-      activation=None,
-      use_bias=False,
-      kernel_regularizer=L2(1e-3),
-      kernel_initializer="normal",
-    ))
-    model.compile(loss=keras.losses.MeanSquaredError(reduction=keras.losses.Reduction.SUM), optimizer="adam")
-    return model, dataset
-
   def test_fit_ols(self):
     rank = 5
-    model, dataset = self._build_ols_model(rank)
-    optimizer = ScipyBatchOptimizer( 
+    weights = 1 + np.arange(rank)
+    model, dataset = _build_ols_model(rank, weights=weights, reg_coeff=1e-5)
+    optimizer = ScipyBatchOptimizer(
       dtype=tf.dtypes.float64,
       batch_size=2,
     ).build(model, dataset)
-    result = optimizer.minimize(method='L-BFGS-B', epochs=10, options={'gtol': 1e-9, 'ftol': 1e-6})
-    expected = 1 + np.arange(rank)
-    actual = np.reshape(model.trainable_weights[0], (1, -1))
-    assert np.allclose(actual, expected, atol=0.01, rtol=0), \
-      f"Best fit parameters {model.trainable_weights[0]} did not match expected {expected}"
+    result = optimizer.minimize(method='L-BFGS-B', epochs=20, options={'gtol': 1e-9, 'ftol': 1e-6})
+    actual = optimizer.get_weights()
+    assert np.allclose(actual, weights, atol=0.01, rtol=0), \
+      f"Best fit parameters {actual} did not match expected {weights}"
+
+  def test_fit_ols_multirun(self):
+    rank = 5
+    weights = 1 + np.arange(rank)
+    model, dataset = _build_ols_model(rank, weights=weights, reg_coeff=1e-5)
+    optimizer = ScipyBatchOptimizer(
+      dtype=tf.dtypes.float64,
+      batch_size=2,
+    ).build(model, dataset)
+    result = optimizer.minimize(
+      method=['L-BFGS-B', 'Newton-CG'],
+      epochs=[2, 3],
+      options=[{'gtol': 1e-9, 'ftol': 1e-6}, {}],
+    )
+    actual = optimizer.get_weights()
+    assert np.allclose(actual, weights, atol=0.01, rtol=0), \
+      f"Best fit parameters {actual} did not match expected {weights}"
