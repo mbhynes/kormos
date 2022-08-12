@@ -41,22 +41,19 @@ def test_get():
 
 def _build_ols_model(
   rank=3,
-  X=None, 
+  X=None,
   sample_weight=None,
   weights=None,
   num_samples=1000,
   reg_coeff=0.1,
-  cls=keras.models.Sequential,
 ):
   w = weights if weights is not None else (1.0 + np.arange(rank))
   X = X if X is not None else np.random.normal(size=(num_samples, rank))
   y = X.dot(w)
   sample_weight = sample_weight if sample_weight is not None else np.ones(len(X))
-  dataset = tf.data.Dataset.from_tensor_slices(
-    tensors=(tf.convert_to_tensor(X), tf.convert_to_tensor(y), tf.convert_to_tensor(sample_weight))
-  )
+  dataset = (tf.convert_to_tensor(X), tf.convert_to_tensor(y), tf.convert_to_tensor(sample_weight))
 
-  model = cls()
+  model = keras.models.Sequential()
   model.add(keras.layers.Dense(
     units=1,
     input_shape=(rank,),
@@ -72,7 +69,7 @@ def _build_mlp_model(train_size=(10, 3)):
   w = np.random.normal(size=train_size[-1])
   X = tf.convert_to_tensor(np.random.normal(size=train_size), dtype=tf.dtypes.float64)
   y = tf.convert_to_tensor((X.numpy().dot(w) > 0.25).astype(int), dtype=tf.dtypes.float64)
-  dataset = tf.data.Dataset.from_tensor_slices(tensors=(X, y))
+  dataset = tf.data.Dataset.from_tensors(tensors=(X, y))
 
   model = keras.models.Sequential()
   model.add(keras.layers.Dense(
@@ -104,17 +101,14 @@ class TestBatchOptimizer(object):
     model, dataset = _build_ols_model(
       rank, weights=w_true, X=np.ones((2, rank)), sample_weight=[4., 3.],
     )
+
     optimizer = BatchOptimizer(
       dtype=tf.dtypes.float64,
       batch_size=1,
     ).build(model, dataset)
 
-    # Get the first row from the dataset with a non-zero sample weight
-    rows = list(dataset.as_numpy_iterator())
-    X = np.array([r[0] for r in rows])
-    y = np.array([r[1] for r in rows])
-
     # Evaluate the expected values and the model at w = [1, 1, 1]
+    (X, y) = (dataset[0].numpy(), dataset[1].numpy())
     w = np.ones(rank)
     bias = 0.0
     y_pred = X.dot(w) + bias

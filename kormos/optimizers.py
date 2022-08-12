@@ -1,6 +1,7 @@
 # MIT License
 #
 # Copyright (c) 2022 Michael B Hynes
+# Copyright (c) 2019 Pi-Yueh Chuang <pychuang@gwu.edu>, where noted.
 #
 # Permission is hereby granted, free of charge, to any person obtaining a copy
 # of this software and associated documentation files (the "Software"), to deal
@@ -38,11 +39,12 @@ logger = logging.getLogger(__name__)
 
 class BatchOptimizer(object):
   """
-  An Optimizer to create callables for deterministic batch optimization algorithms,
+  An Optimizer providing function callables for minimization by batch optimization algorithms,
   such as provided by `scipy.optimize.minimize <https://docs.scipy.org/doc/scipy/reference/generated/scipy.optimize.minimize.html>`_.
   
-  A minimization routine, such as in `scipy`, typically has the following abbreviated signature:
-  
+  Codes implementing batch minimization routines, such the interface `scipy`,
+  typically have a call signature like the following:
+
   .. code-block:: python
 
     minimize(
@@ -53,11 +55,23 @@ class BatchOptimizer(object):
       ...
     )
 
-  This factory class provides methods with the appropriate signature for the above callables:
+  The `BatchOptimizer` factory class provides methods with the appropriate signature for the above callables:
   
   - `fun`, in the method `func(x)` or `func_and_grad(x)`
   - `jac`, in the method `grad(x)` or `func_and_grad(x)`
   - `hessp`, in the method `hessp(x, vector)`
+
+  This class implements the callables above for a provided `keras.Model` and training dataset,
+  in which the execution paradigm is for *full batch* gradient-based optimization, in which
+  every sample in a provided dataset is used to compute the loss function and gradient values.
+
+  The `BatchOptimizer` class implements the function and gradient by evaluating them over
+  minibatches of data and accumulating the result of each minibatch such that the computation
+  is robust even when the training dataset is large or the model requires lots of RAM or
+  GPU memory. 
+
+  Child classes extending this base class must implement `minimize`, which is the method
+  that implements a gradient-based (or Hessian-based) optimization algorithm.
   """
   
   def __init__(self,
@@ -68,28 +82,31 @@ class BatchOptimizer(object):
   ):
     """
     Construct a `BatchOptimizer` object, but do not build it.
-    The `optimizer.build(...)` method must be called by the model's `.fit`.
+    Please note that the `build` method must be called before parameter
+    optimization may be performed on a model.
 
-    Please note that the `dtype` may be explicitly specified, and in general
-    `tensorflow.float64` will make the optimization routine more numerically robust
-    for loss functions with flat regions.  While single precision
-    (`tensorflow.float32`) is often used in deep learning applications, the `scipy`
-    numerical minimization routines that use line searches may require double
-    precision (`tensorflow.float64`) for the convergence criteria of the line
-    search.
+    The `dtype` of a model's backing tensors when converting to an `numpy.ndarray`
+    may be explicitly specified. In general, `tensorflow.float64` will make the
+    optimization routine more numerically robust for loss functions with flat
+    regions, and as such double precision is recommended for the tensorflow model
+    itself. While single precision (`tensorflow.float32`) is often used in deep
+    learning applications, numerical minimization routines that use line searches
+    may require double precision (`tensorflow.float64`) for Wolfe convergence
+    criteria (sufficient decrease) to be numerically resolvable.
 
-    Please note also the choice of `batch_size` here is different than in
+    The choice of `batch_size` here is different than in
     stochastic optimization in which the optimizer typically performs best with
-    small "mini-batches" on the order of ``2^4`` or ``2^5``. The `batch_size` here
-    should be determined based on the available machine memory, and good values should
-    be on the order of ``2^12`` or larger. This `batch_size` is also used during the
-    evaluation of the `hessp` method if you are using a second order algorithm
-    like Newton-CG the evaluation of `hessp`
+    small mini-batches on the order of ``2^4`` or ``2^5``. The `batch_size` here
+    should be determined based on the available machine memory, and good values
+    will be on the order of ``2^12`` or larger, depending on the memory requirements
+    for the evaluation of the model (memory limitations are more likely to be
+    encountered if second order algorithsm like the Newton-CG method are used).
 
     Args:
       dtype: the `tensorflow dtype` to use for weight matrices, defaults to `keras.backend.floatx()`.
-      batch_size (int): the number of training examples to process in a single "batch"
-      max_cache_entries (int): the number of previous `loss/gradient/hessp` values to cache during training
+      batch_size (int): the number of training examples to process in a single "batch" if the 
+        training dataset provided to `compile` must be converted to a `tensorflow.data.Dataset`
+      max_cache_entries (int): the number of previous `loss/gradient/hessp` values to cache during training.
     """
     self.name = name
     self.dtype = dtype
@@ -103,8 +120,8 @@ class BatchOptimizer(object):
 
   def build(self, model, Xyw):
     """
-    Dynamically build this `FunctionFactory` object to prepare its use in a
-    optimization routine for parameter fitting.
+    Dynamically build this `BatchOptimizer` object to prepare for
+    a minimization routine for parameter fitting.
 
     The build process consists of storing the size metadata about this object's `model`'s
     `trainable_weights` such that we may convert between the stacked `numpy.ndarray` vector
@@ -117,7 +134,8 @@ class BatchOptimizer(object):
     Aggs:
       model (keras.Model): the model to be optimized
       Xyw (tensorflow.data.Dataset): the training dataset for optimization. If a type other
-        than `Dataset` is provided, this method will attempt to create one.
+        than `Dataset` is provided, this method will attempt to create one using the
+        `BatchOptimizer`'s `batch_size` attribute.
     Returns:
       this
     """
@@ -154,8 +172,18 @@ class BatchOptimizer(object):
         f"but should be: keras.losses.Reduction.SUM (={keras.losses.Reduction.SUM})"
       )
     if not issubclass(type(Xyw), tf.data.Dataset):
-      logger.warning(f"Provided type of Xyw is '{type(Xyw)}; creating a data adapter with batch_size={self.batch_size}")
-      Xyw = data_adapter.get_data_handler(x=Xyw, model=model, batch_size=self.batch_size)._dataset
+      logger.warning(
+        f"Provided type of Xyw is '{type(Xyw)}; attempting to create "
+        f"a data adapter with batch_size={self.batch_size}."
+        f"It is recommended you provide a tensorflow.data.Dataset directly."
+      )
+      if type(Xyw) is tuple:
+        x, y, w = data_adapter.unpack_x_y_sample_weight(Xyw)
+        Xyw = data_adapter.get_data_handler(
+          x=x, y=y, sample_weight=w, model=model, batch_size=self.batch_size
+        )._dataset
+      else:
+        Xyw = data_adapter.get_data_handler(x=Xyw, model=model, batch_size=self.batch_size)._dataset
       logger.warning(f"Converted input data to {type(Xyw)}")
 
     self.model = model
@@ -213,15 +241,10 @@ class BatchOptimizer(object):
       x: a `numpy.ndarray` (or similar iterable) parameter vector
     """
     assert self._built
-    if type(x) is tf.Tensor:
-      logger.warning(f"set_weights(x) received non-ndarray argument {x}")
-      x = tf.cast(x, self.dtype)
-    elif type(x) is np.ndarray:
-      x = x.astype(self.dtype.as_numpy_dtype())
     if model is None:
       model = self.model
     params = tf.dynamic_partition(
-      tf.convert_to_tensor(x, dtype=self.dtype),
+      tf.convert_to_tensor(x),
       self.part,
       self.n_tensors,
     )
@@ -238,6 +261,41 @@ class BatchOptimizer(object):
     This function is cached such that successive calls for the same argument
     will not trigger a recomputation.
 
+    .. code-block:: python
+
+      def func_and_grad(x):
+
+        # Initialize the function & gradient variables
+        loss = 0.0
+        gradient = np.zeros(x.shape)
+        total_weight = 0.0
+
+        # Loop over subsets [= mini-batches] of the dataset
+        for k, data in enumerate(self.Xyw):
+          data = data_adapter.expand_1d(data)
+          x, y, sample_weight = data_adapter.unpack_x_y_sample_weight(data)
+          total_weight += sample_weight   # not actually, but just for simple illustration
+
+          # Compute the gradient for the respective training dat asubset
+          with tf.GradientTape() as tape:
+            y_pred = self.model(x, training=True)
+            batch_loss = self.model.compiled_loss(y, y_pred, sample_weight)
+
+          # Accumulate the gradient and loss values for this subset
+          batch_grad = tape.gradient(batch_loss, self.model.trainable_variables)
+          gradient += tf.dynamic_stitch(self.idx, batch_grad).numpy()
+          loss += batch_loss.numpy()
+
+        # Compute the regularization terms separately
+        return loss, gradient
+
+    Readers familiar with the standard `keras model training procedure <https://github.com/tensorflow/tensorflow/blob/master/tensorflow/python/keras/engine/training.py>`_
+will note the absence of *regularization losses* provided to ``self.model.compiled_loss``.
+  Regularization terms are computed separately from the loop snippet above over training data minibatches
+  and added to the loss & gradient values.
+
+
+
     Args:
       x (`numpy.ndarray`): vector at which to evaluate the loss function
 
@@ -253,9 +311,6 @@ class BatchOptimizer(object):
     batch_weights = []
     num_batches = None
 
-    # print("Xyw=", self.Xyw)
-    # print(self.Xyw.__dict__)
-    # print("Xyw.batch()=", self.Xyw.batch(10))
     for k, data in enumerate(self.Xyw):
       data = data_adapter.expand_1d(data)
       x, y, sample_weight = data_adapter.unpack_x_y_sample_weight(data)

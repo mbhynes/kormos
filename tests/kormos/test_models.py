@@ -1,3 +1,25 @@
+# MIT License
+#
+# Copyright (c) 2022 Michael B Hynes
+#
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+#
+# The above copyright notice and this permission notice shall be included in all
+# copies or substantial portions of the Software.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+# SOFTWARE.
+
 import pytest
 import numpy as np
 
@@ -6,42 +28,8 @@ from tensorflow import keras
 from tensorflow.keras.regularizers import L1, L2
 from tensorflow.python.keras.engine import data_adapter
 
-from kormos.models import ScipyFittedModel, ScipyFittedSequentialModel
 from kormos.models import BatchOptimizedModel, BatchOptimizedSequentialModel
 from kormos.optimizers import ScipyBatchOptimizer
-
-
-class TestScipyFittedModel:
-
-  def _build_ols_model(self, rank=3, num_samples=1000):
-    w = 1 + np.arange(rank)
-    X = np.random.normal(size=(num_samples, rank))
-    y = X.dot(w)
-    sample_weight = np.ones(len(X))
-    dataset = tf.data.Dataset.from_tensor_slices(
-      tensors=(tf.convert_to_tensor(X), tf.convert_to_tensor(y), tf.convert_to_tensor(sample_weight))
-    )
-
-    model = ScipyFittedSequentialModel()
-    model.add(keras.layers.Dense(
-      units=1,
-      input_shape=(rank,),
-      activation=None,
-      use_bias=False,
-      kernel_regularizer=L2(1e-3),
-      kernel_initializer="normal",
-    ))
-    model.compile(loss=keras.losses.MeanSquaredError(reduction=keras.losses.Reduction.SUM), optimizer="adam")
-    return model, dataset
-
-  def test_fit_ols(self):
-    rank = 5
-    model, dataset = self._build_ols_model(rank)
-    model.fit(x=dataset, method='L-BFGS-B', epochs=10, options={'gtol': 1e-9, 'ftol': 1e-6})
-    expected = 1 + np.arange(rank)
-    actual = np.reshape(model.trainable_weights[0], (1, -1))
-    assert np.allclose(actual, expected, atol=0.01, rtol=0), \
-      f"Best fit parameters {model.trainable_weights[0]} did not match expected {expected}"
 
 
 class TestBatchOptimizedModel:
