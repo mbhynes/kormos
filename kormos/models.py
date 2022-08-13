@@ -60,17 +60,66 @@ logger = logging.getLogger(__name__)
 
 
 class BatchOptimizedModel(keras.Model):
+  """
+  A `keras.Model` allowing parameter optimization by *either* stochastic *or* 
+  deterministic (full batch) algorithms.
+  
+  Stochastic optimization may be performed on a `BatchOptimizedModel` using the
+  standard optimizers in `keras.optimizers.*` or by using a `kormos.optimizers.BatchOptimizer`.
+  The `optimizer` argument to the model's `compile` method will determine which
+  training procedure should be used.
+
+  For instance, the same model may be optimized either by SGD or by L-BFGS-B as follows: 
+
+  .. code-block:: python
+
+    from tensorflow import keras
+    from kormos.models import BatchOptimizedSequentialModel
+
+    # Create an Ordinary Least Squares regressor
+    model = BatchOptimizedSequentialModel()
+    model.add(keras.layers.Dense(
+      units=1,
+      input_shape=(5,),
+    ))
+
+    # compile the model for stochastic optimization
+    model.compile(loss=keras.losses.MeanSquaredError(), optimizer="sgd")
+    model.fit(...)
+
+    # compile the model for deterministic optimization using scipy.optimize.minimize
+    model.compile(loss=keras.losses.MeanSquaredError(), optimizer="L-BFGS-B")
+    model.fit(...)
+
+  """
 
   def compile(self, **kwargs):
+    """
+    Configure the model for training.
+
+    If the `optimizer` argument is specified as one of the `keras.optimizers.*`
+    (or a string identifier thereby), then this method will simply call the
+    parent method `keras.Model.compile` with the arguments provided.
+    Subsequent calls to the `model.fit` will perform training using the 
+    standard `keras.Model.fit` method.
+
+    If the `optimizer` argument is specified as a valid `kormos.optimizers.BatchOptimizer`
+    (or a valid string identifier to create one using `kormos.optimizers.get()`), then
+    the model will be configured to map calls to `fit` to the method `fit_batch`. 
+
+    Keyword Args:
+      optimizer: A `keras.optimizer.Optimizer` or string identifier, or a `kormos.optimizer.BatchOptimizer` or string identifier  
+      **kwargs: all other `kwargs` as passed to `keras.Model.compile <https://keras.io/api/models/model_training_apis/#compile-method>`_
+    """
     optimizer_orig = kwargs.pop("optimizer", "rmsprop")
     use_batch_fit = False
     try:
       optimizer = keras.optimizers.get(optimizer_orig)
       logger.warning(f"BatchOptimizedModel compiled with optimizer={optimizer}.")
     except ValueError:
-      # A BatchOptimizer or its str identifier will raise a ValueError,
+      # A BatchOptimizer or its string identifier will raise a ValueError,
       # in which case we know to fit this model using .fit_batch()
-      optimizer = "rmsprop"  # Set a valid default to call .compile()
+      optimizer = "rmsprop"  # Set a valid default to call .compile() as a dummy
       use_batch_fit = True
 
     super().compile(optimizer=optimizer, **kwargs)
@@ -105,6 +154,53 @@ class BatchOptimizedModel(keras.Model):
       pretrain_fn=None,
       **kwargs
     ):
+    """
+    Train the model using a batch optimization algorithm for up to the maximum number 
+    of iterations (`epochs`), and return the optimization history object.
+
+    This method will prepare the training dataset and execution context, and then
+    call the model's `optimizer`'s `minimize` method (please note that the `optimizer`
+    attribute must implement the `kormos.optimizers.BatchOptimizer` interface).
+    The `optimizer` should implement a gradient-based optimization algorithm that uses
+    the *entire* set of training data to make parameter updates.
+
+    This is different than the standard `keras model training procedure <https://github.com/tensorflow/tensorflow/blob/master/tensorflow/python/keras/engine/training.py>`_
+    in which mini-batches (sample subsets) of the training dataset are created
+    and the optimizer makes updates to the model parameters with a stochastic
+    algorithm using only that subset.
+
+    The arguments to this method have the same meaning as for the `keras.models.Model.fit <https://keras.io/api/models/model_training_apis/#fit-method>`_ method; please see the documentation there except
+    for the arguments noted below.
+
+    Args:
+      batch_size (int): the number of training examples to process in a single "mini-batch" if the 
+        training dataset provided to `compile` must be converted to a `tensorflow.data.Dataset`.
+        If unspecified and the training data provided must be converted to a `tensorflow.data.Dataset`,
+        the value in this model's `optimizer` (of type `BatchOptimizer`) will be used.
+        Please note the choice of `batch_size` here is different than in
+        stochastic optimization in which the optimizer typically performs best with
+        small mini-batches on the order of ``2^4`` or ``2^5``. The `batch_size` here
+        should be determined based on the available machine memory, and good values
+        will be on the order of ``2^12`` or larger, depending on the memory requirements
+        for the evaluation of the model (memory limitations are more likely to be
+        encountered if second order algorithsm like the Newton-CG method are used).
+      pretrain_fn (callable): univariate function that accepts the model as its argument
+        and performs an arbitrary operation on it. Or, a list of such functions if the
+        model's `optimizer` accepts it. The `pretrain_fn` will be applied prior to
+        the start of the optimization routine.
+    Keyword Args:
+      **kwargs: keyword arguments to be passed to this model's `optimizer.minimize(**kwargs)` method
+    Returns:
+        A `History` object. Its `History.history` attribute is
+        a record of training loss values and metrics values
+        at successive epochs, as well as validation loss values
+        and validation metrics values (if applicable).
+    Raises:
+        RuntimeError: 1. If the model was never compiled or,
+        2. If `model.fit` is  wrapped in `tf.function`.
+        ValueError: In case of mismatch between the provided input data
+            and what the model expects or when the input data is empty.
+    """
     self._assert_compile_was_called()
     self._check_call_args("fit")
     if batch_size is not None:
@@ -210,12 +306,6 @@ class BatchOptimizedModel(keras.Model):
           )
           val_logs = {'val_' + name: val for name, val in val_logs.items()}
           logs.update(val_logs)
-          # try:
-          #   val_logs = {
-          #     "val_" + name: val for (name, val) in self.test_step(validation_data).items()
-          #   }
-          # except Exception as e:
-          #   print(e)
 
         callbacks.on_train_batch_end(epoch, logs)
         callbacks.on_epoch_end(epoch, logs)

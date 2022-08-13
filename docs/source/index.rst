@@ -3,6 +3,13 @@
 
 The `kormos` package provides an interface between `scipy.optimize.minimize <https://docs.scipy.org/doc/scipy/reference/generated/scipy.optimize.minimize.html>`_ and `keras <https://keras.io>`_ for training `keras` models with traditional deterministic minimization algorithms.
 
+It provides `keras` users with:
+
+- `keras.Model` subclasses that may be optimized without changes in the API---a model may be trained using *either* the built-in stochastic mini-batch algorithms *or* the deterministic batch algorithms from `scipy.optimize`
+- Out-of-the-box Interoperability with the usual `keras` utilities, e.g.:
+  - The model `fit <https://keras.io/api/models/model_training_apis/#fit-method>`_ method is still usable by `KerasTuner <https://keras.io/keras_tuner/>`_
+  - `fit` still returns a the history object with optimization metadata and validation metrics at each (batch) iteration
+
 .. toctree::
    :maxdepth: 2
    :caption: Contents:
@@ -28,6 +35,10 @@ Because `keras` is a powerful and useful tool, and is named after the Greek word
 
 This package is related to `keras`, but isn't very powerful or useful. It's named after the Greek word *κορμός*, which means *stump*.
 
+Requirements
+~~~~~~~~~~~~
+`kormos` runs on `python3` with `tensorflow 2+` and the respective `keras` engine packaged with it.
+
 Installation
 ~~~~~~~~~~~~
 
@@ -37,36 +48,47 @@ Install via the PyPI package [kormos](https://pypi.org/project/kormos/) using pi
 
   pip3 install kormos
 
-The `skelo` package is an implementation of the `Elo <https://en.wikipedia.org/wiki/Elo_rating_system>`_ and `Glicko2 <https://en.wikipedia.org/wiki/Glicko_rating_system>`_ rating systems with a `scikit-learn <https://scikit-learn.org/stable>`_ compatible interface.
+Alternatively, if you like your releases bloody rare you may install from:
 
-The `skelo` package is a simple implementation suitable for small-scale rating systems that fit into memory on a single machine.
-It's intended to provide a convenient API for creating Elo/Glicko ratings in a data science & analytics workflow for small games on the scale thousands of players and millions of matches, primarily as a means of feature transformation in other `sklearn` pipelines or benchmarking classifier accuracy.
+.. code-block:: python
+
+  pip3 install git+https://github.com/mbhynes/kormos
+
 
 License 
 =======
-This project is released under the MIT license. Please see the LICENSE header in the source code for more details.
+This project is released under the MIT license, and contains adaptations of other codes released under the Apache and MIT licenses.
+Please see the header in each source file for the applicable license and copyright notices therein. 
 
 Acknowledgements & Related Work
 ================================
-This package was created as a means to an end in other projects, and has adapted code from the following sources:
+This package has adapted code from the following sources:
 
 - `Pi-Yueh Chuang's <https://pychao.com/contact-us-and-pgp-key/>`_ MIT-licensed `scipy.optimize.minimize_lbfgs` wrapper available on github `here <https://gist.github.com/piyueh/712ec7d4540489aad2dcfb80f9a54993>`_.
 - `Allen Lavoie's <https://github.com/allenlavoie>`_ Hessian-vector-product routines in `tensorflow`, available on github `here <https://github.com/tensorflow/tensorflow/commit/5b37e7ed14eb7dddae8a0e87435595347a315bb7>`_ under the Apache License version 2.
 
-There is also a project `keras-opt <https://github.com/pedro-r-marques/keras-opt>`_  authored by `Pedro Marques <https://github.com/pedro-r-marques>`_ with an identical goal but different implementation and API.
+There is also a related project `keras-opt <https://github.com/pedro-r-marques/keras-opt>`_ authored by `Pedro Marques <https://github.com/pedro-r-marques>`_ with a similar goal but unrelated implementation and API. The `kormos` package is recommended over `keras-opt` for users that need interoperability with utilities like `keras_tuner <https://keras.io/keras_tuner/>`_ or are training models with heavier memory requirements and large datasets.
 
 API Reference
 =============
 
-Keras Models
+Models
 ~~~~~~~~~~~~
-.. automodule:: kormos.model
+.. automodule:: kormos.models
    :members:
 
-Function Factory for `scipy`
+Optimizers
+~~~~~~~~~~~~
+.. automodule:: kormos.optimizers
+   :members:
+
+
+Caching Utilities
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-.. automodule:: kormos.utils.scipy
+The `kormos.optimizers.BatchOptimizer` uses a simple dictionary cache for the `func_and_grad` method with the signature as described below.
+
+.. automodule:: kormos.utils.cache
    :members:
 
 

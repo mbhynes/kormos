@@ -13,7 +13,7 @@ version = "0.1.0"
 authors = [
   { name="Michael B Hynes", email="mike.hynes.rhymes@gmail.com" },
 ]
-description = "An interface to `scipy.optimize.minimize` for deterministically training `keras` models."
+description = "An interface to `scipy.optimize.minimize` for training `keras` models with batch optimization algorithms."
 readme = "README.md"
 license = { file="LICENSE" }
 requires-python = ">=3.6"

@@ -36,13 +36,18 @@ from kormos.utils.cache import OptimizationStateCache
 
 logger = logging.getLogger(__name__)
 
+OPTIMIZER_IDENTIFIERS = set(['scipy'] + [
+  method.lower() for method in MINIMIZE_METHODS
+] + [
+  method.upper() for method in MINIMIZE_METHODS
+])
+
 
 class BatchOptimizer(object):
   """
-  An Optimizer providing function callables for minimization by batch optimization algorithms,
-  such as provided by `scipy.optimize.minimize <https://docs.scipy.org/doc/scipy/reference/generated/scipy.optimize.minimize.html>`_.
-  
-  Codes implementing batch minimization routines, such the interface `scipy`,
+  An optimizer class providing function callables for minimization by batch optimization algorithms.
+
+  Codes implementing batch minimization routines, such `scipy.optimize.minimize`,
   typically have a call signature like the following:
 
   .. code-block:: python
@@ -66,9 +71,11 @@ class BatchOptimizer(object):
   every sample in a provided dataset is used to compute the loss function and gradient values.
 
   The `BatchOptimizer` class implements the function and gradient by evaluating them over
-  minibatches of data and accumulating the result of each minibatch such that the computation
+  mini-batches of data and accumulating the result of each minibatch such that the computation
   is robust even when the training dataset is large or the model requires lots of RAM or
-  GPU memory. 
+  GPU memory. To ensure the correct summation, the model's `loss` function attribute
+  must have the `reduction=keras.losses.Reduction.SUM` explicitly set (after which
+  the total sum will be averaged).
 
   Child classes extending this base class must implement `minimize`, which is the method
   that implements a gradient-based (or Hessian-based) optimization algorithm.
@@ -77,7 +84,7 @@ class BatchOptimizer(object):
   def __init__(self,
     name="batchoptimizer", 
     dtype=keras.backend.floatx(),
-    batch_size=2**12,
+    batch_size=2**10,
     max_cache_entries=5,
   ):
     """
@@ -104,8 +111,8 @@ class BatchOptimizer(object):
 
     Args:
       dtype: the `tensorflow dtype` to use for weight matrices, defaults to `keras.backend.floatx()`.
-      batch_size (int): the number of training examples to process in a single "batch" if the 
-        training dataset provided to `compile` must be converted to a `tensorflow.data.Dataset`
+      batch_size (int): the number of training examples to process in a single "mini-batch" if the 
+        training dataset provided to `build()` must be converted to a `tensorflow.data.Dataset`
       max_cache_entries (int): the number of previous `loss/gradient/hessp` values to cache during training.
     """
     self.name = name
@@ -135,9 +142,10 @@ class BatchOptimizer(object):
       model (keras.Model): the model to be optimized
       Xyw (tensorflow.data.Dataset): the training dataset for optimization. If a type other
         than `Dataset` is provided, this method will attempt to create one using the
-        `BatchOptimizer`'s `batch_size` attribute.
-    Returns:
-      this
+        `BatchOptimizer`'s `batch_size` attribute. Providing a `Dataset` is recommended.
+    Raises:
+      ValueError: if the `model.loss.reduction` is not `kerass.losses.reduction.Reduction.SUM`
+  
     """
     def _build_weight_indices():
       # obtain the shapes of all trainable parameters in the model
@@ -174,7 +182,7 @@ class BatchOptimizer(object):
     if not issubclass(type(Xyw), tf.data.Dataset):
       logger.warning(
         f"Provided type of Xyw is '{type(Xyw)}; attempting to create "
-        f"a data adapter with batch_size={self.batch_size}."
+        f"a data adapter with batch_size={self.batch_size}. "
         f"It is recommended you provide a tensorflow.data.Dataset directly."
       )
       if type(Xyw) is tuple:
@@ -257,9 +265,14 @@ class BatchOptimizer(object):
   def func_and_grad(self, x):
     """
     Evaluate the loss function and its gradient.
-
-    This function is cached such that successive calls for the same argument
-    will not trigger a recomputation.
+    
+    This method will loop over mini-batches of the training data
+    and compute the loss and gradient in a `tensorflow.GradientTape`
+    for each mini-batch, such that models that require large amounts
+    of memory or large training sets (or both) may be used robustly.
+    
+    The loop is straightforward, and looks like the following, with
+    some simplifications made:
 
     .. code-block:: python
 
@@ -290,11 +303,9 @@ class BatchOptimizer(object):
         return loss, gradient
 
     Readers familiar with the standard `keras model training procedure <https://github.com/tensorflow/tensorflow/blob/master/tensorflow/python/keras/engine/training.py>`_
-will note the absence of *regularization losses* provided to ``self.model.compiled_loss``.
-  Regularization terms are computed separately from the loop snippet above over training data minibatches
-  and added to the loss & gradient values.
-
-
+    will note the absence of *regularization losses* provided to
+    ``self.model.compiled_loss``. The regularization terms are computed separately
+    from the loop snippet above, and then added to the loss & gradient values.
 
     Args:
       x (`numpy.ndarray`): vector at which to evaluate the loss function
@@ -320,24 +331,17 @@ will note the absence of *regularization losses* provided to ``self.model.compil
 
       with tf.GradientTape() as tape:
         y_pred = self.model(x, training=True)
-        batch_loss = self.model.compiled_loss(
-          y,
-          y_pred,
-          sample_weight=sample_weight,
-        )
+        batch_loss = self.model.compiled_loss(y, y_pred, sample_weight=sample_weight)
 
       # calculate gradients and convert to 1D tf.Tensor
       batch_grad = tape.gradient(batch_loss, self.model.trainable_variables)
       gradient += tf.dynamic_stitch(self.idx, batch_grad).numpy()
       loss += batch_loss.numpy()
 
-    # Add the regularization terms separately to correctly isolate the normalization
+    # Add the regularization terms separately to correctly separate this from sample weight normalization
     with tf.GradientTape() as tape:
       reg_loss = self.model.compiled_loss(
-        y,
-        y,
-        sample_weight=(0 * y),
-        regularization_losses=self.model.losses,
+        y, y, sample_weight=(0 * y), regularization_losses=[ls or 0.0 for ls in self.model.losses]
       )
     reg_grad = tape.gradient(reg_loss, self.model.trainable_variables)
     reg_grad = tf.dynamic_stitch(self.idx, reg_grad).numpy()
@@ -377,6 +381,9 @@ will note the absence of *regularization losses* provided to ``self.model.compil
     The implementation here has been adapted from the Hessian-vector-product 
     benchmarking suite in `tensorflow`, available
     `here <https://github.com/tensorflow/tensorflow/commit/5b37e7ed14eb7dddae8a0e87435595347a315bb7>`_.
+    
+    The computation of the Hessian is performed over mini-batches and accumulated,
+    as described in the docstring for the method `func_and_grad`.
 
     Args:
       x (`numpy.ndarray`): point at which to evaluate the loss function
@@ -402,25 +409,18 @@ will note the absence of *regularization losses* provided to ``self.model.compil
       with tf.GradientTape() as outer_tape:
         with tf.GradientTape() as inner_tape:
           y_pred = self.model(x, training=True)
-          batch_loss = self.model.compiled_loss(
-            y,
-            y_pred,
-            sample_weight=sample_weight,
-          )
+          batch_loss = self.model.compiled_loss(y, y_pred, sample_weight=sample_weight)
         grad_slices = inner_tape.gradient(batch_loss, self.model.trainable_variables)
         grads = [tf.convert_to_tensor(g, dtype=self.dtype) for g in grad_slices]
 
       batch_hvp = outer_tape.gradient(grads, self.model.trainable_variables, output_gradients=vector_part)
       hvp += tf.dynamic_stitch(self.idx, batch_hvp).numpy()
 
-    # Compute the regularization hessian terms
+    # Add the regularization terms separately to correctly separate this from sample weight normalization
     with tf.GradientTape() as outer_tape:
       with tf.GradientTape() as inner_tape:
         reg_loss = self.model.compiled_loss(
-          y,
-          y,
-          sample_weight=(0 * y),
-          regularization_losses=self.model.losses,
+          y, y, sample_weight=(0 * y), regularization_losses=[ls or 0.0 for ls in self.model.losses]
         )
       reg_grad_slices = inner_tape.gradient(reg_loss, self.model.trainable_variables)
       reg_grads = [tf.convert_to_tensor(g, dtype=self.dtype) for g in reg_grad_slices]
@@ -436,16 +436,49 @@ will note the absence of *regularization losses* provided to ``self.model.compil
 
 
 class ScipyBatchOptimizer(BatchOptimizer):
-
+  """
+  A `BatchOptimizer` that wraps the `scipy.optimize.minimize <https://docs.scipy.org/doc/scipy/reference/generated/scipy.optimize.minimize.html>`_
+  library for multivariate gradient-based optimization.
+  """
   DEFAULT_METHOD = "L-BFGS-B"
 
   def __init__(self, name="scipy", method=None, **kwargs):
-    if method is not None and method not in MINIMIZE_METHODS:
-      raise ValueError(f"Provided method {method} is not in {MINIMIZE_METHODS}")
+    if method is not None and method not in OPTIMIZER_IDENTIFIERS:
+      raise ValueError(f"Provided method {method} is not in {OPTIMIZER_IDENTIFIERS}")
     self.method = method
     super().__init__(name=name, **kwargs)
 
   def minimize(self, epochs=1, callback=None, pretrain_fn=None, method=None, options=None):
+    """
+    Minimize the loss function for a compiled `model` using an algorithm 
+    from `scipy.optimize.minimize`.
+
+    The arguments to this method replicate those of the `scipy.optimize` and may be used analogously.
+    However it is also possible to pass *list* values for the following arguments:
+
+    - `epochs`
+    - `method`
+    - `options`
+
+    When lists are provided, this will result in *multiple* successive calls to `scipy.optimize.minize`
+    using the `method` and `options` requested, allowing for combinations of algorithms to be used.
+    The result of one method will be passed in a daisy chain as the initial value for the next method.
+
+    Args:
+      epochs (int or list[int]): number of maximum iterations to perform.
+        This will be passed as `options['maxiters']` to `scipy`.
+      callback (callable): univariate callable function to be executed at the end of each iteration.
+        The argument to this function is the current `np.ndarray` parameter vector. 
+      pretrain_fn (callable): univariate callable function to be executed at the end of each iteration.
+        The argument to this function is the `model` instance. This may be used in conjuction with
+        a list-like `method` to modify a model or set certain model layers as trainable or not trainable
+        in an alternating fashion.
+      method (str or list[str]): method to use for optimization
+      options (dict or list[dict]): dictionary payload of options to configure an optimization algorithm
+
+    Returns:
+      `scipy.optimize.OptimizeResult`
+    """
     assert self._built
 
     # Convert scalars to lists to allow for a suite of optimization methods to be applied successively
@@ -497,26 +530,33 @@ class ScipyBatchOptimizer(BatchOptimizer):
         self.set_weights(result.x)
         if result.nit == 0:
           callback(self.get_weights())
-    # This is an advanced implementeation of early stopping combined
+    # This is an advanced implementation of early stopping combined
     # with "human in the loop" interative machine learning.
     except KeyboardInterrupt:
       result = sigint_handler()
-
     return result
 
 
 OPTIMIZER_IDENTIFIER_MAP = dict(**{
   'scipy': (ScipyBatchOptimizer, (), {}),
 }, **{
-  method.lower(): (ScipyBatchOptimizer, (), {'name': method.lower(), 'method': method}) 
+  method.lower(): (ScipyBatchOptimizer, (), {'name': method.lower(), 'method': method.upper()}) 
   for method in MINIMIZE_METHODS
 }, **{
-  method.upper(): (ScipyBatchOptimizer, (), {'name': method.lower(), 'method': method}) 
+  method.upper(): (ScipyBatchOptimizer, (), {'name': method.lower(), 'method': method.upper()}) 
   for method in MINIMIZE_METHODS
 })
 
-
 def get(identifier):
+  """
+  Return an instantiated `kormos.optimizers.BatchOptimizer`.
+
+  Args:
+    identifier (str or `kormos.optimizers.BatchOptimizer`): A string identifier
+      to use to create a `BatchOptimizer`. May be either 'scipy' or the name of a
+      specific `method` implemented by ``scipy.optimize.minimize(method=<name>)``
+      
+  """
   if isinstance(identifier, BatchOptimizer):
     return identifier
   if isinstance(identifier, str):
