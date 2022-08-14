@@ -2,6 +2,7 @@
 #
 # Copyright (c) 2022 Michael B Hynes
 # Copyright (c) 2019 Pi-Yueh Chuang <pychuang@gwu.edu>, where noted.
+# Copyright (c) 2015 The TensorFlow Authors, where noted.
 #
 # Permission is hereby granted, free of charge, to any person obtaining a copy
 # of this software and associated documentation files (the "Software"), to deal
@@ -124,6 +125,7 @@ class BatchOptimizer(object):
     self.k = 0
     self.fg_evals = 0
     self.hessp_evals = 0
+    self.results = []
 
   def build(self, model, Xyw):
     """
@@ -145,15 +147,16 @@ class BatchOptimizer(object):
         `BatchOptimizer`'s `batch_size` attribute. Providing a `Dataset` is recommended.
     Raises:
       ValueError: if the `model.loss.reduction` is not `kerass.losses.reduction.Reduction.SUM`
-  
     """
+    # This code has been modified from a program with the original copyright notice:
+    #
+    # Copyright © 2019 Pi-Yueh Chuang <pychuang@gwu.edu>
+    # Distributed under terms of the MIT license.
+
     def _build_weight_indices():
-      # obtain the shapes of all trainable parameters in the model
       shapes = tf.shape_n(model.trainable_weights)
       n_tensors = len(shapes)
 
-      # we'll use tf.dynamic_stitch and tf.dynamic_partition later, so we need to
-      # prepare required information first
       idx_end = 0
       idx = [] # stitch indices
       part = [] # partition indices
@@ -174,11 +177,6 @@ class BatchOptimizer(object):
       raise ValueError(
         f"Provided model.loss={model.loss} is type: {type(model.loss)}, but a keras.losses.Loss is required"
       )
-    if model.loss.reduction != keras.losses.Reduction.SUM:
-      raise ValueError(
-        f"Provided model.loss.reduction = {model.loss.reduction}, "
-        f"but should be: keras.losses.Reduction.SUM (={keras.losses.Reduction.SUM})"
-      )
     if not issubclass(type(Xyw), tf.data.Dataset):
       logger.warning(
         f"Provided type of Xyw is '{type(Xyw)}; attempting to create "
@@ -196,7 +194,6 @@ class BatchOptimizer(object):
 
     self.model = model
     self.Xyw = Xyw
-    self.n = Xyw.cardinality().numpy()
     _build_weight_indices()
     self._built = True
     return self
@@ -277,35 +274,61 @@ class BatchOptimizer(object):
     .. code-block:: python
 
       def func_and_grad(x):
-
-        # Initialize the function & gradient variables
+        self.set_weights(x)
+        n = 0
         loss = 0.0
         gradient = np.zeros(x.shape)
-        total_weight = 0.0
 
-        # Loop over subsets [= mini-batches] of the dataset
+        if self.model.loss.reduction == keras.losses.Reduction.SUM:
+          reweight_batches = False
+        else:
+          reweight_batches = True
+
         for k, data in enumerate(self.Xyw):
           data = data_adapter.expand_1d(data)
           x, y, sample_weight = data_adapter.unpack_x_y_sample_weight(data)
-          total_weight += sample_weight   # not actually, but just for simple illustration
+          num_samples = len(x)
+          n += num_samples
 
-          # Compute the gradient for the respective training dat asubset
           with tf.GradientTape() as tape:
             y_pred = self.model(x, training=True)
-            batch_loss = self.model.compiled_loss(y, y_pred, sample_weight)
+            batch_loss = self.model.compiled_loss(y, y_pred, sample_weight=sample_weight)
 
-          # Accumulate the gradient and loss values for this subset
+          # calculate gradients and convert to 1D tf.Tensor
           batch_grad = tape.gradient(batch_loss, self.model.trainable_variables)
-          gradient += tf.dynamic_stitch(self.idx, batch_grad).numpy()
-          loss += batch_loss.numpy()
+          batch_grad = tf.cast(tf.dynamic_stitch(self.idx, batch_grad), dtype=self.dtype).numpy()
 
-        # Compute the regularization terms separately
-        return loss, gradient
+          coeff = num_samples if reweight_batches else 1.0
+          gradient += coeff * batch_grad
+          loss += coeff * batch_loss.numpy()
+        
+        # Add the regularization terms separately to correctly separate this from sample weight normalization
+        with tf.GradientTape() as tape:
+          reg_loss = self.model.compiled_loss(
+            y, y, sample_weight=(0 * y), regularization_losses=self.model.losses,
+          )
+        reg_grad = [
+          g if g is not None else (0 * w)
+          for (g, w) in zip(tape.gradient(reg_loss, self.model.trainable_variables), self.model.trainable_variables)
+        ]
+        reg_grad = tf.cast(tf.dynamic_stitch(self.idx, reg_grad), dtype=self.dtype).numpy()
+        coeff = (1.0 / n) if reweight_batches else 1.0
+        return (
+          (coeff * loss) + reg_loss.numpy(),
+          (coeff * gradient) + reg_grad,
+        )
 
     Readers familiar with the standard `keras model training procedure <https://github.com/tensorflow/tensorflow/blob/master/tensorflow/python/keras/engine/training.py>`_
     will note the absence of *regularization losses* provided to
     ``self.model.compiled_loss``. The regularization terms are computed separately
     from the loop snippet above, and then added to the loss & gradient values.
+    
+    Please note that providing a `sample_weight` does not necessarily produce a weighted average
+    over the dataset. Rather, like `keras`, the `sample_weight` is applied element-wise to each
+    data sample, and the final total is divided by the number of training examples if the
+    reduction mechanism is `keras.losses.reduction.Reduction.SUM_OVER_BATCH_SIZE`.
+    If a weighted average is desired, it is the caller's responsibility to ensure that
+    the sum of the values in `sample_weight` is 1.
 
     Args:
       x (`numpy.ndarray`): vector at which to evaluate the loss function
@@ -315,41 +338,57 @@ class BatchOptimizer(object):
     """
     assert self._built
 
-    self.set_weights(x)
-    loss = 0.0
-    gradient = np.zeros(x.shape)
-    self.fg_evals += 1
-    batch_weights = []
-    num_batches = None
+    def _fg(x):
+      self.set_weights(x)
+      n = 0
+      loss = 0.0
+      gradient = np.zeros(x.shape)
+      self.fg_evals += 1
 
-    for k, data in enumerate(self.Xyw):
-      data = data_adapter.expand_1d(data)
-      x, y, sample_weight = data_adapter.unpack_x_y_sample_weight(data)
-      num_samples = len(x)
-      num_batches = num_batches or int(np.ceil(self.n / num_samples))
-      batch_weights.append(tf.reduce_sum(sample_weight).numpy() if sample_weight is not None else num_samples)
+      # The sample_weight
+      if self.model.loss.reduction == keras.losses.Reduction.SUM:
+        reweight_batches = False
+      else:
+        reweight_batches = True
 
+      for k, data in enumerate(self.Xyw):
+        data = data_adapter.expand_1d(data)
+        x, y, sample_weight = data_adapter.unpack_x_y_sample_weight(data)
+        num_samples = len(x)
+        n += num_samples
+
+        with tf.GradientTape() as tape:
+          y_pred = self.model(x, training=True)
+          batch_loss = self.model.compiled_loss(y, y_pred, sample_weight=sample_weight)
+
+        # calculate gradients and convert to 1D tf.Tensor
+        batch_grad = tape.gradient(batch_loss, self.model.trainable_variables)
+        batch_grad = tf.cast(tf.dynamic_stitch(self.idx, batch_grad), dtype=self.dtype).numpy()
+
+        coeff = num_samples if reweight_batches else 1.0
+        gradient += coeff * batch_grad
+        loss += coeff * batch_loss.numpy()
+      
+      # Add the regularization terms separately to correctly separate this from sample weight normalization
       with tf.GradientTape() as tape:
-        y_pred = self.model(x, training=True)
-        batch_loss = self.model.compiled_loss(y, y_pred, sample_weight=sample_weight)
-
-      # calculate gradients and convert to 1D tf.Tensor
-      batch_grad = tape.gradient(batch_loss, self.model.trainable_variables)
-      gradient += tf.dynamic_stitch(self.idx, batch_grad).numpy()
-      loss += batch_loss.numpy()
-
-    # Add the regularization terms separately to correctly separate this from sample weight normalization
-    with tf.GradientTape() as tape:
-      reg_loss = self.model.compiled_loss(
-        y, y, sample_weight=(0 * y), regularization_losses=[ls or 0.0 for ls in self.model.losses]
+        reg_loss = self.model.compiled_loss(
+          y, y, sample_weight=(0 * y), regularization_losses=self.model.losses,
+        )
+      reg_grad = [
+        g if g is not None else (0 * w)
+        for (g, w) in zip(tape.gradient(reg_loss, self.model.trainable_variables), self.model.trainable_variables)
+      ]
+      reg_grad = tf.cast(tf.dynamic_stitch(self.idx, reg_grad), dtype=self.dtype).numpy()
+      coeff = (1.0 / n) if reweight_batches else 1.0
+      return (
+        (coeff * loss) + reg_loss.numpy(),
+        (coeff * gradient) + reg_grad,
       )
-    reg_grad = tape.gradient(reg_loss, self.model.trainable_variables)
-    reg_grad = tf.dynamic_stitch(self.idx, reg_grad).numpy()
-    total_weight = np.sum(batch_weights)
-    return (
-      loss / total_weight + reg_loss,
-      gradient / total_weight + reg_grad,
-    )
+
+    # outputs = self.model.distribute_strategy.run(_fg, args=(x,))
+    # loss = reduce_per_replica(outputs[0], self.distribute_strategy, reduction='first') 
+    # grad = reduce_per_replica(outputs[0], self.distribute_strategy, reduction='first') 
+    return _fg(x)
   
   def func(self, x):
     """
@@ -386,50 +425,74 @@ class BatchOptimizer(object):
     as described in the docstring for the method `func_and_grad`.
 
     Args:
-      x (`numpy.ndarray`): point at which to evaluate the loss function
-      vector (`numpy.ndarray`): vector to project the Hessian onto
+      x (numpy.ndarray): point at which to evaluate the loss function
+      vector (numpy.ndarray): direction vector to project the Hessian onto
     Returns:
       numpy.ndarray: the Hessian vector product
     """
+    # Copyright 2015 The TensorFlow Authors. All Rights Reserved.
+    #
+    # Licensed under the Apache License, Version 2.0 (the "License");
+    # you may not use this file except in compliance with the License.
+    # You may obtain a copy of the License at
+    #
+    #     http://www.apache.org/licenses/LICENSE-2.0
+    #
+    # Unless required by applicable law or agreed to in writing, software
+    # distributed under the License is distributed on an "AS IS" BASIS,
+    # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+    # See the License for the specific language governing permissions and
+    # limitations under the License.
+    
     self.hessp_evals += 1
+    n = 0
     hvp = np.zeros(x.shape)
     self.set_weights(x)
     vector_part = self._numpy_to_tensors(vector)
 
-    batch_weights = []
-    num_batches = None
+    if self.model.loss.reduction == keras.losses.Reduction.SUM:
+      reweight_batches = False
+    else:
+      reweight_batches = True
 
     for k, data in enumerate(self.Xyw):
       data = data_adapter.expand_1d(data)
       x, y, sample_weight = data_adapter.unpack_x_y_sample_weight(data)
       num_samples = len(x)
-      num_batches = num_batches or int(np.ceil(self.n / num_samples))
-      batch_weights.append(tf.reduce_sum(sample_weight).numpy() if sample_weight is not None else num_samples)
+      n += num_samples
 
       with tf.GradientTape() as outer_tape:
         with tf.GradientTape() as inner_tape:
           y_pred = self.model(x, training=True)
           batch_loss = self.model.compiled_loss(y, y_pred, sample_weight=sample_weight)
-        grad_slices = inner_tape.gradient(batch_loss, self.model.trainable_variables)
-        grads = [tf.convert_to_tensor(g, dtype=self.dtype) for g in grad_slices]
+        grad_slices = [
+          g if g is not None else (0.0 * w)
+          for (g, w) in zip(inner_tape.gradient(batch_loss, self.model.trainable_variables), self.model.trainable_variables)
+        ]
+        grads = [tf.cast(tf.convert_to_tensor(g), dtype=self.dtype) for g in grad_slices]
 
       batch_hvp = outer_tape.gradient(grads, self.model.trainable_variables, output_gradients=vector_part)
-      hvp += tf.dynamic_stitch(self.idx, batch_hvp).numpy()
+
+      coeff = num_samples if reweight_batches else 1.0
+      hvp += coeff * tf.dynamic_stitch(self.idx, batch_hvp).numpy()
 
     # Add the regularization terms separately to correctly separate this from sample weight normalization
     with tf.GradientTape() as outer_tape:
       with tf.GradientTape() as inner_tape:
         reg_loss = self.model.compiled_loss(
-          y, y, sample_weight=(0 * y), regularization_losses=[ls or 0.0 for ls in self.model.losses]
+          y, y, sample_weight=(0 * y), regularization_losses=self.model.losses,
         )
-      reg_grad_slices = inner_tape.gradient(reg_loss, self.model.trainable_variables)
-      reg_grads = [tf.convert_to_tensor(g, dtype=self.dtype) for g in reg_grad_slices]
+      reg_grad_slices = [
+        g if g is not None else (0.0 * w)
+        for (g, w) in zip(inner_tape.gradient(reg_loss, self.model.trainable_variables), self.model.trainable_variables)
+      ]
+      reg_grads = [tf.cast(tf.convert_to_tensor(g), dtype=self.dtype) for g in reg_grad_slices]
 
     reg_hvp = outer_tape.gradient(reg_grads, self.model.trainable_variables, output_gradients=vector_part)
     reg_hvp = tf.dynamic_stitch(self.idx, reg_hvp).numpy()
 
-    total_weight = np.sum(batch_weights)
-    return hvp / total_weight + reg_hvp
+    coeff = (1.0 / n) if reweight_batches else 1.0
+    return (coeff * hvp) + reg_hvp
 
   def minimize(self, epochs=1, callback=None, pretrain_fn=None, **kwargs):
     raise NotImplementedError
@@ -445,10 +508,19 @@ class ScipyBatchOptimizer(BatchOptimizer):
   def __init__(self, name="scipy", method=None, **kwargs):
     if method is not None and method not in OPTIMIZER_IDENTIFIERS:
       raise ValueError(f"Provided method {method} is not in {OPTIMIZER_IDENTIFIERS}")
-    self.method = method
+    self.method = method or self.DEFAULT_METHOD
     super().__init__(name=name, **kwargs)
 
-  def minimize(self, epochs=1, callback=None, pretrain_fn=None, method=None, options=None):
+  def minimize(
+    self,
+    epochs=1,
+    callback=None,
+    pretrain_fn=None,
+    method=None,
+    options=None,
+    bounds=None,
+    constraints=None,
+    tol=None):
     """
     Minimize the loss function for a compiled `model` using an algorithm 
     from `scipy.optimize.minimize`.
@@ -475,16 +547,22 @@ class ScipyBatchOptimizer(BatchOptimizer):
         in an alternating fashion.
       method (str or list[str]): method to use for optimization
       options (dict or list[dict]): dictionary payload of options to configure an optimization algorithm
-
+      bounds (sequence or `scipy.optimize.Bounds`):
+          Bounds on variables for Nelder-Mead, L-BFGS-B, TNC, SLSQP, Powell, and
+          trust-constr methods. Please see the `scipy.optimize.minimize` docstring for details.
+      constraints: Constraints definition for the COBYLA, SLSQP and trust-constr solvers. 
+          Please see the `scipy.optimize.minimize` docstring for details.
     Returns:
       `scipy.optimize.OptimizeResult`
     """
     assert self._built
+    if callback is not None:
+      assert callable(callback), "Provided callback is not callable"
 
     # Convert scalars to lists to allow for a suite of optimization methods to be applied successively
     epochs = epochs if type(epochs) is list else [epochs]
     options = options if type(options) is list else len(epochs) * [options or {}]
-    method = method if type(method) is list else len(epochs) * [method or self.DEFAULT_METHOD]
+    method = method if type(method) is list else len(epochs) * [method or self.method]
     pretrain_fn = pretrain_fn if type(pretrain_fn) is list else len(epochs) * [pretrain_fn]
 
     # Create a list of config dicts to pass to scipy.optimize.minimize successively
@@ -493,6 +571,9 @@ class ScipyBatchOptimizer(BatchOptimizer):
       config = {
         'options': deepcopy(options[k]),
         'method': method[k],
+        'bounds': bounds,
+        'constraints': constraints,
+        'tol': tol,
         'pretrain_fn': pretrain_fn[k],
       }
       config['options']['maxiter'] = e
@@ -513,8 +594,9 @@ class ScipyBatchOptimizer(BatchOptimizer):
 
     try:
       for config in minimize_configs:
-        if callable(config['pretrain_fn']):
-          config['pretrain_fn'](self.model)
+        _fn = config.pop('pretrain_fn')
+        if callable(_fn):
+          _fn(self.model)
           # Rebuild the optimize in case the pretrain_fn has modified the model
           self.build(self.model, self.Xyw)
 
@@ -523,18 +605,21 @@ class ScipyBatchOptimizer(BatchOptimizer):
           x0=self.get_weights(),
           jac=self.grad,
           hessp=self.hessp,
-          method=config['method'],
-          options=config['options'],
           callback=callback,
+          **config,
         )
         self.set_weights(result.x)
-        if result.nit == 0:
+        if result.nit == 0 and callback is not None:
           callback(self.get_weights())
+
+        self.results.append(result)
     # This is an advanced implementation of early stopping combined
     # with "human in the loop" interative machine learning.
     except KeyboardInterrupt:
       result = sigint_handler()
-    return result
+      self.results.append(result)
+    finally:
+      return self.get_weights()
 
 
 OPTIMIZER_IDENTIFIER_MAP = dict(**{

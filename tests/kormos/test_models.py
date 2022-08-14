@@ -22,6 +22,7 @@
 
 import pytest
 import logging
+import tempfile
 import numpy as np
 
 import tensorflow as tf
@@ -178,41 +179,46 @@ class TestBatchOptimizedSequentialModel:
       logging.error("keras_tuner was not installed; skipping test.")
       return
 
-    rank = 5
+    keras.utils.set_random_seed(1)
+    np.random.seed(1)
+    rank = 20
 
     def _build_model(hp):
       model = BatchOptimizedSequentialModel()
       model.add(keras.layers.Dense(
-        units=hp.Int("units", min_value=3, max_value=5, step=2),
+        units=hp.Int("units", min_value=1, max_value=4, step=1),
         input_shape=(rank,),
         activation="sigmoid",
-        kernel_initializer="ones",
+        kernel_initializer="normal",
       ))
       model.add(keras.layers.Dense(
         units=1,
         activation="sigmoid",
-        kernel_regularizer=L2(1e-3),
         kernel_initializer="ones",
       ))
-      loss = keras.losses.MeanSquaredError(reduction=keras.losses.Reduction.SUM)
-      model.compile(loss=loss, optimizer="newton-cg", metrics=[keras.metrics.RootMeanSquaredError()])
+      loss = keras.losses.MeanSquaredError()
+      model.compile(loss=loss, optimizer="cg", metrics=[keras.metrics.RootMeanSquaredError()])
       return model
 
-    np.random.seed(1)
-    # Create a linear model to overfit lol
+    # Generate data from a high rank linear model (relative to # of units in hidden layer)
     w = np.random.normal(size=rank)
-    X = np.random.normal(size=(10, rank))
+    X = np.random.normal(size=(1000, rank))
     y = np.expand_dims(X.dot(w), axis=1)
     dataset = tf.data.Dataset.from_tensors((X, y))
 
-    tuner = keras_tuner.RandomSearch(
-      hypermodel=_build_model,
-      objective=keras_tuner.Objective("val_root_mean_squared_error", direction="min"),
-      max_trials=3,
-      executions_per_trial=2,
-    )
-    tuner.search(x=X, y=y, epochs=2, validation_data=dataset)
-    assert len(tuner.get_best_models())
-    best_model = tuner.get_best_models()[0]
+    with tempfile.TemporaryDirectory() as tmpdir:
+      tuner = keras_tuner.RandomSearch(
+        hypermodel=_build_model,
+        objective=keras_tuner.Objective("val_root_mean_squared_error", direction="min"),
+        max_trials=4,
+        directory=tmpdir,
+        overwrite=True,
+      )
+      # Perform a hyperparameter search
+      tuner.search(x=X, y=y, epochs=100, validation_data=dataset, verbose=1)
+      assert len(tuner.get_best_models()) > 0
+      best_params = tuner.get_best_hyperparameters()[0].values
 
-    assert len(tuner.get_best_models())
+      # In this contrived example, the best model should be
+      # the one with the highest degrees of freedom
+      assert best_params['units'] == 4

@@ -37,13 +37,12 @@ class OptimizationStateCache(object):
 
   @staticmethod
   def hash(x):
-    h = None
     if type(x) is tf.Tensor:
       h = OptimizationStateCache.hash(x.numpy())
     if type(x) is np.ndarray:
       h = hex(hash(x.tobytes()))
-    if not h:
-      raise ValueError(f"Could not hash x of type {type(x)}")
+    else:
+      h = x
     return h
 
   def clear(self):

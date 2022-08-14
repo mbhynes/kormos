@@ -62,7 +62,7 @@ def _build_ols_model(
     kernel_regularizer=L2(reg_coeff),
     kernel_initializer="ones",
   ))
-  model.compile(loss=keras.losses.MeanSquaredError(reduction=keras.losses.Reduction.SUM), optimizer="adam")
+  model.compile(loss=keras.losses.MeanSquaredError(reduction=keras.losses.Reduction.SUM_OVER_BATCH_SIZE), optimizer="adam")
   return model, dataset
 
 def _build_mlp_model(train_size=(10, 3)):
@@ -87,7 +87,7 @@ def _build_mlp_model(train_size=(10, 3)):
     kernel_regularizer=L2(1e-1),
     kernel_initializer="ones",
   ))
-  model.compile(loss=keras.losses.BinaryCrossentropy(reduction=keras.losses.Reduction.SUM), optimizer="adam")
+  model.compile(loss=keras.losses.BinaryCrossentropy(), optimizer="adam")
   return model, dataset
 
 
@@ -97,11 +97,11 @@ class TestBatchOptimizer(object):
 
   def test_grad_analytic(self):
     rank = 3
+    reg_coeff = 0.1
     w_true = 1.0 + np.arange(rank)
     model, dataset = _build_ols_model(
-      rank, weights=w_true, X=np.ones((2, rank)), sample_weight=[4., 3.],
+      rank, weights=w_true, X=np.ones((2, rank)), reg_coeff=reg_coeff
     )
-
     optimizer = BatchOptimizer(
       dtype=tf.dtypes.float64,
       batch_size=1,
@@ -112,7 +112,6 @@ class TestBatchOptimizer(object):
     w = np.ones(rank)
     bias = 0.0
     y_pred = X.dot(w) + bias
-    reg_coeff = 0.1
     n = X.shape[0]
     expected_loss = (1 / n) * (y - y_pred).dot(y - y_pred) + reg_coeff * w.dot(w)
     expected_grad = (2 / n) * X.T.dot(y_pred - y) + 2 * (reg_coeff * w)
@@ -181,10 +180,11 @@ class TestScipyBatchOptimizer(object):
       dtype=tf.dtypes.float64,
       batch_size=2,
     ).build(model, dataset)
-    result = optimizer.minimize(method='L-BFGS-B', epochs=20, options={'gtol': 1e-9, 'ftol': 1e-6})
-    actual = optimizer.get_weights()
+    actual = optimizer.minimize(method='L-BFGS-B', epochs=20, options={'gtol': 1e-9, 'ftol': 1e-6})
     assert np.allclose(actual, weights, atol=0.01, rtol=0), \
       f"Best fit parameters {actual} did not match expected {weights}"
+    assert len(optimizer.results) == 1
+    assert all([r.success for r in optimizer.results])
 
   def test_fit_ols_multirun(self):
     rank = 5
@@ -194,11 +194,14 @@ class TestScipyBatchOptimizer(object):
       dtype=tf.dtypes.float64,
       batch_size=2,
     ).build(model, dataset)
-    result = optimizer.minimize(
+    actual = optimizer.minimize(
       method=['L-BFGS-B', 'Newton-CG'],
-      epochs=[2, 3],
+      epochs=[2, 5],
       options=[{'gtol': 1e-9, 'ftol': 1e-6}, {}],
     )
-    actual = optimizer.get_weights()
     assert np.allclose(actual, weights, atol=0.01, rtol=0), \
       f"Best fit parameters {actual} did not match expected {weights}"
+    assert len(optimizer.results) == 2
+    # We only check for the success flag in the final solver call,
+    # since we haven't run the first solver long enough to converge
+    assert optimizer.results[-1].success

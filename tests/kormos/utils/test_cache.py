@@ -61,9 +61,6 @@ class TestCachedDecorator(object):
   cache = OptimizationStateCache()
   num_evals = 0
 
-  def __init__(self):
-    self.num_evals = 0
-
   @OptimizationStateCache.cached('cache_key')
   def _cached_method(self, x):
     self.num_evals += 1

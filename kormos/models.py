@@ -326,7 +326,7 @@ class BatchOptimizedModel(keras.Model):
       pretrain_fn=pretrain_fn,
       **kwargs
     )
-    self.optimizer.set_weights(result.x)
+    self.optimizer.set_weights(result)
     callbacks.on_train_end(logs=logs)
     return self.history
 
