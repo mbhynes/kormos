@@ -7,3 +7,4 @@ keras-tuner
 sphinx
 sphinx-rtd-theme
 black
+pylint

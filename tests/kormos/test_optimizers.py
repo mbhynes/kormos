@@ -26,7 +26,6 @@ import scipy.optimize as opt
 
 import tensorflow as tf
 from tensorflow import keras
-from tensorflow.keras.regularizers import L1, L2
 from tensorflow.python.keras.engine import data_adapter
 
 import kormos.optimizers as kopt
@@ -67,7 +66,7 @@ def _build_ols_model(
             input_shape=(rank,),
             activation=None,
             use_bias=False,
-            kernel_regularizer=L2(reg_coeff),
+            kernel_regularizer=keras.regularizers.L2(reg_coeff),
             kernel_initializer="ones",
         )
     )
@@ -92,7 +91,7 @@ def _build_mlp_model(train_size=(10, 3), **kwargs):
             input_shape=(train_size[-1],),
             activation="sigmoid",
             use_bias=False,
-            kernel_regularizer=L1(0e-1),
+            kernel_regularizer=keras.regularizers.L1(0e-1),
             kernel_initializer="ones",
         )
     )
@@ -101,7 +100,7 @@ def _build_mlp_model(train_size=(10, 3), **kwargs):
             units=1,
             activation="sigmoid",
             use_bias=False,
-            kernel_regularizer=L2(0e-1),
+            kernel_regularizer=keras.regularizers.L2(0e-1),
             kernel_initializer="ones",
         )
     )

@@ -45,12 +45,14 @@ import scipy
 
 import tensorflow as tf
 from tensorflow.python.platform import tf_logging
-from tensorflow import keras
 
 from keras.utils import traceback_utils
+from tensorflow.python.distribute.coordinator import cluster_coordinator
 from tensorflow.python.keras.engine import base_layer
 from tensorflow.python.keras.engine import data_adapter
 from tensorflow.python.keras.engine import training_utils
+
+from tensorflow import keras
 from keras import callbacks as callbacks_module
 
 import kormos

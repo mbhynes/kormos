@@ -27,7 +27,7 @@ import numpy as np
 import tensorflow as tf
 
 
-class OptimizationStateCache(object):
+class OptimizationStateCache:
     def __init__(self, max_entries=100):
         assert max_entries > 0
         self.max_entries = max_entries

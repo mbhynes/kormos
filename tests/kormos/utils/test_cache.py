@@ -46,9 +46,9 @@ class TestOptimizationStateCache(object):
             f = fn(x[k])
             c.update(x[k], f=fn(x[k]))
             assert c.get(x[k], "f") == f
-            assert c.get(x[k], "invalid") == None
+            assert c.get(x[k], "invalid") is None
 
-        assert c.get(x[0], "f") == None
+        assert c.get(x[0], "f") is None
         assert set(c.state_dict.keys()) == {c.hash(x[k]) for k in range(1, n)}
 
 
@@ -66,7 +66,7 @@ class TestCachedDecorator(object):
         return 2 * x
 
     def test_decorated_method(self):
-        assert self.cache.get(1, "cache_key") == None
+        assert self.cache.get(1, "cache_key") is None
         assert self.num_evals == 0
 
         f = self._cached_method(1)

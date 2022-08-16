@@ -47,7 +47,7 @@ OPTIMIZER_IDENTIFIERS = set(
 )
 
 
-class BatchOptimizer(object):
+class BatchOptimizer:
     """
     An optimizer class providing function callables for minimization by batch optimization algorithms.
 

@@ -20,15 +20,14 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 
-import pytest
 import logging
+import pytest
 import tempfile
 import numpy as np
 
 import tensorflow as tf
 from tensorflow import keras
 
-from tensorflow.keras.regularizers import L1, L2
 from tensorflow.python.keras.engine import data_adapter
 
 from kormos.models import BatchOptimizedModel, BatchOptimizedSequentialModel
@@ -61,7 +60,7 @@ class TestBatchOptimizedModel:
             input_shape=(rank,),
             activation=None,
             use_bias=False,
-            kernel_regularizer=L2(1e-3),
+            kernel_regularizer=keras.regularizers.L2(1e-3),
             kernel_initializer="ones",
         )(model_input)
         model = BatchOptimizedModel(
@@ -95,7 +94,7 @@ class TestBatchOptimizedModel:
             input_shape=(rank,),
             activation=None,
             use_bias=False,
-            kernel_regularizer=L2(1e-3),
+            kernel_regularizer=keras.regularizers.L2(1e-3),
             kernel_initializer="normal",
         )(model_input)
         model = BatchOptimizedModel(
@@ -150,7 +149,7 @@ class TestBatchOptimizedSequentialModel:
                 input_shape=(rank,),
                 activation=None,
                 use_bias=False,
-                kernel_regularizer=L2(1e-3),
+                kernel_regularizer=keras.regularizers.L2(1e-3),
                 kernel_initializer="ones",
             )
         )
@@ -176,7 +175,7 @@ class TestBatchOptimizedSequentialModel:
                 input_shape=(rank,),
                 activation=None,
                 use_bias=False,
-                kernel_regularizer=L2(1e-3),
+                kernel_regularizer=keras.regularizers.L2(1e-3),
                 kernel_initializer="ones",
             )
         )
