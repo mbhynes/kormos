@@ -33,6 +33,7 @@ import tensorflow as tf
 from tensorflow import keras
 from tensorflow.python.keras.engine import data_adapter
 from tensorflow.python.keras.engine import training
+from tensorflow.python.keras.utils import losses_utils
 from tensorflow.python.ops import math_ops
 
 from kormos.utils.cache import OptimizationStateCache
@@ -318,7 +319,8 @@ class BatchOptimizer(object):
             def _distrib_fn():
                 z = tf.convert_to_tensor([0.0])
                 with tf.GradientTape() as tape:
-                    reg_loss = math_ops.add_n(model.losses)
+                    reg_loss = losses_utils.cast_losses_to_common_dtype(model.losses)
+                    reg_loss = math_ops.add_n(reg_loss)
                 reg_grad = [
                     g if g is not None else (0 * w)
                     for (g, w) in zip(
@@ -420,7 +422,8 @@ class BatchOptimizer(object):
                 z = tf.zeros(shape=(1,), dtype=self.dtype)
                 with tf.GradientTape() as outer_tape:
                     with tf.GradientTape() as inner_tape:
-                        reg_loss = math_ops.add_n(model.losses)
+                        reg_loss = losses_utils.cast_losses_to_common_dtype(model.losses)
+                        reg_loss = math_ops.add_n(reg_loss)
                     reg_grad_slices = [
                         g if g is not None else (0.0 * w)
                         for (g, w) in zip(
@@ -464,8 +467,7 @@ class BatchOptimizer(object):
         def _per_replica_hessp(data, vec):
             data = data_adapter.expand_1d(data)
             x, y, sample_weight = data_adapter.unpack_x_y_sample_weight(data)
-            # num_samples = tf.convert_to_tensor(float(len(x)), dtype=self.dtype)
-            num_samples = len(x)  # tf.convert_to_tensor(len(x), dtype=tf.int32)
+            num_samples = len(x)
 
             with tf.GradientTape() as outer_tape:
                 with tf.GradientTape() as inner_tape:
@@ -543,9 +545,14 @@ class BatchOptimizer(object):
         assert self._built
         self.set_weights(x)
         self.fg_evals += 1
-        (fg, fg_reg) = (self._fg(), self._reg_fg())
-        (f, g) = (fg[0].numpy() + fg_reg[0].numpy(), fg[1].numpy() + fg_reg[1].numpy())
-        return (f, g)
+        (f, g) = self._fg()
+        # Add regularization losses only if model.losses is not empty, which
+        # is the case if no regularization terms exist in the model
+        if self.model.losses:
+            (f_reg, g_reg) = self._reg_fg() 
+            f += f_reg
+            g += g_reg
+        return (f.numpy(), g.numpy())
 
     def func(self, x):
         """
@@ -591,7 +598,10 @@ class BatchOptimizer(object):
         self.hessp_evals += 1
         self.set_weights(x)
         vec = self._numpy_to_tensors(vector)
-        return self._hessp(vec).numpy() + self._reg_hessp(vec).numpy()
+        hvp = self._hessp(vec)
+        if self.model.losses:
+          hvp += self._reg_hessp(vec)
+        return hvp.numpy()
 
     def minimize(self, epochs=1, callback=None, pretrain_fn=None, **kwargs):
         raise NotImplementedError
