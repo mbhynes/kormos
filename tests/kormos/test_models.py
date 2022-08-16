@@ -27,6 +27,7 @@ import numpy as np
 
 import tensorflow as tf
 from tensorflow import keras
+
 from tensorflow.keras.regularizers import L1, L2
 from tensorflow.python.keras.engine import data_adapter
 
@@ -44,6 +45,8 @@ except ImportError:
 
 
 class TestBatchOptimizedModel:
+
+  keras.backend.set_floatx("float64")
 
   def test_stochastic_optimizer(self):
     """
@@ -93,7 +96,7 @@ class TestBatchOptimizedModel:
       outputs=model_output,
     )
     loss = keras.losses.MeanSquaredError(reduction=keras.losses.Reduction.SUM)
-    model.compile(loss=loss, optimizer=optimizer)
+    model.compile(loss=loss, optimizer=optimizer, run_eagerly=False)
     assert model.fit == model.fit_batch
 
     np.random.seed(1)
@@ -131,7 +134,7 @@ class TestBatchOptimizedSequentialModel:
       kernel_initializer="ones",
     ))
     loss = keras.losses.MeanSquaredError(reduction=keras.losses.Reduction.SUM)
-    model.compile(loss=loss, optimizer="adam")
+    model.compile(loss=loss, optimizer="adam", run_eagerly=False)
     assert model.fit != model.fit_batch
 
     np.random.seed(1)
@@ -155,7 +158,7 @@ class TestBatchOptimizedSequentialModel:
       kernel_initializer="ones",
     ))
     loss = keras.losses.MeanSquaredError(reduction=keras.losses.Reduction.SUM)
-    model.compile(loss=loss, optimizer=optimizer)
+    model.compile(loss=loss, optimizer=optimizer, run_eagerly=False)
     assert model.fit == model.fit_batch
 
     np.random.seed(1)
@@ -197,7 +200,12 @@ class TestBatchOptimizedSequentialModel:
         kernel_initializer="ones",
       ))
       loss = keras.losses.MeanSquaredError()
-      model.compile(loss=loss, optimizer="cg", metrics=[keras.metrics.RootMeanSquaredError()])
+      model.compile(
+        loss=loss,
+        optimizer="cg",
+        metrics=[keras.metrics.RootMeanSquaredError()],
+        run_eagerly=False,
+      )
       return model
 
     # Generate data from a high rank linear model (relative to # of units in hidden layer)
