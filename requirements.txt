@@ -6,3 +6,4 @@ keras
 keras-tuner
 sphinx
 sphinx-rtd-theme
+black
