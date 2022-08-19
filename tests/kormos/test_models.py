@@ -83,10 +83,7 @@ class TestBatchOptimizedModel:
     def test_compile_scipy_optimizer(self, optimizer):
         rank = 5
         model_input = keras.Input(
-            shape=(
-                None,
-                rank,
-            ),
+            shape=(None, rank),
             name="input",
         )
         model_output = keras.layers.Dense(

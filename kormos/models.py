@@ -130,6 +130,9 @@ class BatchOptimizedModel(keras.Model):
         if use_batch_fit:
             self.optimizer = kormos.optimizers.get(optimizer_orig)
             self.fit = self.fit_batch
+        else:
+            # If this model is being re-compiled, reset the fit method to the parent
+            self.fit = super().fit
 
     @traceback_utils.filter_traceback
     def fit_batch(
@@ -205,11 +208,6 @@ class BatchOptimizedModel(keras.Model):
         """
         self._assert_compile_was_called()
         self._check_call_args("fit")
-        if batch_size is not None:
-            logger.warning(
-                f"batch_size={batch_size} was provided; this will override the setting:"
-                f"BatchOptimizedModel.optimizer.batch_size={BatchOptimizedModel.optimizer.batch_size}."
-            )
 
         if verbose == "auto":
             if (

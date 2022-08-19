@@ -162,7 +162,7 @@ class BatchOptimizer:
         `code <https://gist.github.com/piyueh/712ec7d4540489aad2dcfb80f9a54993>`_,
         and this file retains the original 2019 copyright notice above.
 
-        Aggs:
+        Args:
           model (keras.Model): the model to be optimized
           Xyw (tensorflow.data.Dataset): the training dataset for optimization. If a type other
             than `Dataset` is provided, this method will attempt to create one using the
@@ -328,6 +328,7 @@ class BatchOptimizer:
                         model.trainable_variables,
                     )
                 ]
+                reg_loss = tf.cast(reg_loss, dtype=self.dtype)
                 reg_grad = tf.cast(
                     tf.dynamic_stitch(self.idx, reg_grad), dtype=self.dtype
                 )
@@ -440,7 +441,7 @@ class BatchOptimizer:
                     reg_grads, model.trainable_variables, output_gradients=vec
                 )
                 reg_hvp = tf.dynamic_stitch(self.idx, reg_hvp)
-                return reg_hvp
+                return tf.cast(reg_hvp, dtype=self.dtype)
 
             result = strategy.run(_distrib_fn, args=(vec,))
             return training.reduce_per_replica(result, strategy, "first")
@@ -495,7 +496,7 @@ class BatchOptimizer:
             return coeff * hvp, num_samples
 
         def _fn(vec):
-            n = tf.constant(0, dtype=self.dtype)
+            n = tf.constant(0, dtype=tf.int32)
             hvp = tf.zeros(shape=(self.num_model_variables,), dtype=self.dtype)
 
             for k, data in enumerate(self.Xyw):
@@ -509,7 +510,7 @@ class BatchOptimizer:
                     tf.distribute.ReduceOp.SUM, per_replica_n, axis=None
                 )
 
-            coeff = 1.0 / n if self.reweight_batches else 1.0
+            coeff = 1.0 / tf.cast(n, dtype=self.dtype) if self.reweight_batches else 1.0
             return tf.cast(coeff, dtype=self.dtype) * hvp
 
         return _fn
