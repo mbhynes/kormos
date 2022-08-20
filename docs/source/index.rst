@@ -1,16 +1,16 @@
 `kormos`
 =================================
 
-The `kormos` package provides an interface between `scipy.optimize.minimize <https://docs.scipy.org/doc/scipy/reference/generated/scipy.optimize.minimize.html>`_ and `keras <https://keras.io>`_ for training `keras` models with deterministic minimization algorithms like `L-BFGS <https://en.wikipedia.org/wiki/Limited-memory_BFGS>`_.
+The `kormos` package provides an interface between `scipy.optimize.minimize <https://docs.scipy.org/doc/scipy/reference/generated/scipy.optimize.minimize.html>`_ and `keras <https://keras.io>`_ for training models with deterministic minimization algorithms like `L-BFGS <https://en.wikipedia.org/wiki/Limited-memory_BFGS>`_.
 
-It provides `keras` users with:
+It provides [peculiar] `keras` users with:
 
 - `keras.Model` subclasses that may be optimized without changes in the API---a model may be trained using *either* the built-in stochastic mini-batch algorithms *or* the deterministic batch algorithms from `scipy.optimize`
 - Out-of-the-box interoperability with the usual `keras` utilities and workflows; e.g.:
-  - `fit` still returns a the history object with optimization metadata and validation metrics from each iteration of the solver
-  - The model `fit <https://keras.io/api/models/model_training_apis/#fit-method>`_ method is still usable by `KerasTuner <https://keras.io/keras_tuner/>`_
+
+  - ``fit()`` still returns a the history object with optimization metadata and validation metrics from each iteration of the solver and is usable by `KerasTuner <https://keras.io/keras_tuner/>`_
   - Support for distributed training strategies (at least in principle---this has admittedly not been integration tested)
-- The ability to use *second order* optimization methods from `scipy` by evaluating Hessian-vector-products rather than the full Hessian matrix if you have a very specific need for this (spoiler: you almost certainly do not)
+- The ability to use *second order* optimization methods from `scipy` by evaluating Hessian-vector-products if you have a very specific need for this (spoiler: you almost certainly do not)
 
 .. toctree::
    :maxdepth: 2
@@ -30,6 +30,7 @@ If you are working with models or datasets in which training data can reasonably
 - these algorithms may have faster convergence to accurate solutions of the optimization problem if the dataset is small enough that full batch gradient and Hessian-vector-product computation times aren't prohibitive
 
 So TL;DR: because Luddites exist even in the field of numerical optimization.
+
 .. Luddites or Wackos lol? https://www.youtube.com/watch?v=0C4yBk6syOE#t=1m48s
 
 Why The Name Kormos?
