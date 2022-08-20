@@ -1,10 +1,8 @@
 numpy
 scipy
 pytest
-tensorflow>=2.2
-keras
+tensorflow>=2
 keras-tuner
 sphinx
 sphinx-rtd-theme
 black
-pylint
