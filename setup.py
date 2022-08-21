@@ -10,6 +10,7 @@ setuptools.setup(
   author_email="mike.hynes.rhymes@gmail.com",
   description="An interface to scipy.optimize.minimize for training Keras models with batch optimization algorithms like L-BFGS.",
   long_description=long_description,
+  long_description_content_type="text/x-rst",
   url="https://github.com/mbhynes/kormos",
   packages=setuptools.find_packages(),
   classifiers=[

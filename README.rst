@@ -11,7 +11,7 @@
 Kormos
 =================================
 
-The `kormos` package provides an interface between `scipy.optimize.minimize <https://docs.scipy.org/doc/scipy/reference/generated/scipy.optimize.minimize.html>`_ and `Keras <https://keras.io>`_ for training models with deterministic minimization algorithms like `L-BFGS <https://en.wikipedia.org/wiki/Limited-memory_BFGS>`_.
+The `kormos` package provides an interface between `scipy.optimize.minimize <https://docs.scipy.org/doc/scipy/reference/generated/scipy.optimize.minimize.html>`_ and `Keras <https://keras.io>`_ for training models with deterministic minimization algorithms like L-BFGS.
 
 It provides `Keras` users with:
 
