@@ -1,10 +1,12 @@
-.. raw:: html
+.. image:: https://github.com/mbhynes/kormos/workflows/Tests/badge.svg
+  :target: https://github.com/mbhynes/kormos/actions
 
-  <p align="left">
-  <a href="https://github.com/mbhynes/kormos/actions"><img alt="Tests" src="https://github.com/mbhynes/kormos/workflows/Tests/badge.svg"></a>
-  <a href="https://kormos.readthedocs.io"><img alt="Docs" src="https://readthedocs.org/projects/kormos/badge/?version=latest"></a>
-  <a href="https://pypi.org/project/kormos/"><img alt="PyPI" src="https://img.shields.io/pypi/v/kormos"></a>
-  </p>
+
+.. image:: https://readthedocs.org/projects/kormos/badge/?version=latest
+  :target: https://kormos.readthedocs.io
+
+.. image:: https://img.shields.io/pypi/v/kormos
+  :target: https://pypi.org/project/kormos
 
 Kormos
 =================================
