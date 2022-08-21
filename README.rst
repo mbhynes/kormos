@@ -1,12 +1,12 @@
-kormos
+Kormos
 =================================
 
-The `kormos` package provides an interface between `scipy.optimize.minimize <https://docs.scipy.org/doc/scipy/reference/generated/scipy.optimize.minimize.html>`_ and `keras <https://keras.io>`_ for training models with deterministic minimization algorithms like `L-BFGS <https://en.wikipedia.org/wiki/Limited-memory_BFGS>`_.
+The `kormos` package provides an interface between `scipy.optimize.minimize <https://docs.scipy.org/doc/scipy/reference/generated/scipy.optimize.minimize.html>`_ and `Keras <https://keras.io>`_ for training models with deterministic minimization algorithms like `L-BFGS <https://en.wikipedia.org/wiki/Limited-memory_BFGS>`_.
 
-It provides [peculiar] `keras` users with:
+It provides `Keras` users with:
 
-- `keras.Model` subclasses that may be optimized without changes in the API---a model may be trained using *either* the built-in stochastic mini-batch algorithms *or* the deterministic batch algorithms from `scipy.optimize`
-- Out-of-the-box interoperability with the usual `keras` utilities and workflows; e.g.:
+- ``keras.Model`` subclasses that may be optimized without changes in the API---a model may be trained using *either* the built-in stochastic mini-batch algorithms *or* the deterministic batch algorithms from ``scipy.optimize``
+- Out-of-the-box interoperability with the usual `Keras` utilities and workflows; e.g.:
 
   - ``fit()`` still returns a the history object with optimization metadata and validation metrics from each iteration of the solver and is usable by `KerasTuner <https://keras.io/keras_tuner/>`_
   - Support for distributed training strategies (at least in principle---this has admittedly not been integration tested)
@@ -32,9 +32,9 @@ So TL;DR: because Luddites exist even in the field of numerical optimization.
 Why The Name Kormos?
 --------------------
 
-Because `keras` is a powerful and useful tool, and is named after the Greek word *κέρας*, which means *horn*.
+Because `Keras` is a powerful and useful tool, and is named after the Greek word *κέρας*, which means *horn*.
 
-This package is related to `keras`, but it's not very powerful or useful.
+`Kormos` is related to `Keras`, but it's not very powerful or useful.
 It's named after the Greek word *κορμός*, which means *stump*.
 
 License 
@@ -51,8 +51,8 @@ Requirements
 The `kormos` package is built for:
 
 - Python 3+ 
-- Tensorflow 2+ (and the respective `keras` engine packaged with it)
-- Scipy 0.1+ (any version really, since the `scipy.optimize.minimize` signature is stable)
+- Tensorflow 2+ (and the respective ``tensorflow.keras`` module with it)
+- Scipy 0.1+ (any version really, since the ``scipy.optimize.minimize`` signature is stable)
 
 Installation
 ------------
@@ -72,7 +72,7 @@ Alternatively, if you like your releases bloody rare you may install from `git` 
 Usage Examples
 ==============
 
-A `kormos` model is drag-and-drop replaceable with any `keras` model.
+A `kormos` model is drag-and-drop replaceable with any `Keras` model.
 Below we provide some toy code examples, including Collaborative Filtering and MNIST classification examples adapted from the *Code Examples* section of `keras.io <https://keras.io/examples/>`_. 
 
 Example: Linear Regression with Sequential API
@@ -162,7 +162,7 @@ We can now also *recompile* the model to use a stochastic optimizer; let's refit
       validation_data=(Xval, yval),
   )
 
-This is a somewhat contrived example in modern machine learning (small dataset and simple model with very few parameters), but it's the kind of classical use case in which a deterministic algorithm will converge faster than a stochastic algorithm. If you were interested in `keras` primarily for the nice `tensorflow` API and autodifferentiation routines, but had unsexy, non-deep modelling goals, this bud's for you:
+This is a somewhat contrived example in modern machine learning (small dataset and simple model with very few parameters), but it's the kind of classical use case in which a deterministic algorithm will converge faster than a stochastic algorithm. If you were interested in `Keras` primarily for the nice `tensorflow` API and autodifferentiation routines, but had unsexy, non-deep modelling goals, this bud's for you:
 
 .. code-block:: python
 
@@ -224,7 +224,7 @@ The Newton-CG algorithm has second order convergence, so we should find that the
 Example: Collaborative Filtering for Item Recommendation
 --------------------------------------------------------
 
-We present a simple linear matrix factorization model for building a recommender system using the MovieLens dataset, and use the same preprocessing steps as in the `keras` example, `Collaborative Filtering for Movie Recommendations <https://keras.io/examples/structured_data/collaborative_filtering_movielens/>`_.
+We present a simple linear matrix factorization model for building a recommender system using the MovieLens dataset, and use the same preprocessing steps as in the `Keras` example, `Collaborative Filtering for Movie Recommendations <https://keras.io/examples/structured_data/collaborative_filtering_movielens/>`_.
 
 **Define the Model**
 
@@ -271,7 +271,7 @@ We define a simple matrix factorization model for factorizing the ratings matrix
 
 **Prepare the Data**
 
-We run the same pre-processing steps as in the `keras` example above.
+We run the same pre-processing steps as in the `Keras` example above.
 (Please be aware that there are methodological errors in these steps that we have left unchanged: (1) it is not correct to split the training and testing data uniformly randomly, since some movies have only 1 rating and hence should not be members of the testing set, and (2) it is not possible to construct a factorization model that represents each user/item by a vector of rank ``k`` if ``k`` is *greater* than the number of observations (ratings) that that user/item has in the training data---such a system is `overdetermined <https://en.wikipedia.org/wiki/Overdetermined_system>`_).
 
 .. code-block:: python
@@ -504,23 +504,22 @@ We start by running ADAM for 1 epoch, and then using this solution as a warm sta
       method='bfgs',
   )
 
-
 Implementation Details
 ======================
 
-The `kormos` package implements an interface for batch optimization and wraps `scipy.optimize.minimize` in that interface in the following steps:
+The `kormos` package implements an interface for batch optimization and wraps ``scipy.optimize.minimize`` in that interface in the following steps:
 
-- We create a subclass of `keras.Model`, `BatchOptimizedModel` (and `BatchOptimizedSequentialModel` to extend the `Sequential` API).
+- We create a subclass of ``keras.Model``, ``BatchOptimizedModel`` (and ``BatchOptimizedSequentialModel`` to extend the `Sequential` API).
 
 - The subclass provides a ``fit_batch()`` method with nearly identical signature to the parent ``fit()``, but does not perform stochastic mini-batch optimization. Instead, this method offloads all optimization to the the model's ``optimizer`` attribute, which must implement the method ``minimize()`` to perform training by minimizing the the loss function provided during model compilation.
 
-- When a `BatchOptimizedModel` is compiled with a `BatchOptimzer` (or string identifier for one) as its `optimizer` argument, the ``fit`` method inherited from `keras.Model` is overriden with a pointer to ``fit_batch()`` (such that a `BatchOptimizedModel` may be trained with either stochastic or deterministic solvers, depending on how it's compiled).
+- When a ``BatchOptimizedModel`` is compiled with a ``BatchOptimzer`` (or string identifier for one) as its `optimizer` argument, the ``fit()`` method inherited from ``keras.Model`` is overriden with a pointer to ``fit_batch()`` (such that a ``BatchOptimizedModel`` may be trained with either stochastic or deterministic solvers, depending on how it's compiled).
 
-- The `ScipyBatchOptimizer` class extends the `BatchOptimizer` interface and uses the `scipy.optimize.minimize` routine to fit the model.
+- The ``ScipyBatchOptimizer`` class extends the ``BatchOptimizer`` interface and uses the ``scipy.optimize.minimize`` routine to fit the model.
 
-At first face this is more complicated than the *recommended* way of extending `keras` to perform custom training (i.e. by overriding ``keras.Model.train_step`` such as in the article `Customizing what happens in fit() <https://keras.io/guides/customizing_what_happens_in_fit/>`_).
-However, unfortunately we found extending ``train_step`` to be awkward or infeasible for implementing a batch optimization algorithm while still making use of the standard `keras` utilities for computing *validation metrics* at each iteration end (epoch).
-Overriding the model ``train_step`` (and putting the call to `scipy.optimize.minimize` inside it) would mean that from the `keras` model's perspective only a single *epoch* would be performed, such that validation metrics would only be computed at the very end of the optimzation routine.
+At first face this is more complicated than the *recommended* way of extending `Keras` to perform custom training (i.e. by overriding ``keras.Model.train_step()`` such as in the article `Customizing what happens in fit() <https://keras.io/guides/customizing_what_happens_in_fit/>`_).
+However, unfortunately we found extending ``train_step()`` to be awkward or infeasible for implementing a batch optimization algorithm while still making use of the standard `Keras` utilities for computing *validation metrics* at each iteration end (epoch).
+Overriding the model ``train_step()`` (and putting the call to `scipy.optimize.minimize` inside it) would mean that from the `Keras` model's perspective only a single *epoch* would be performed, such that validation metrics would only be computed at the very end of the optimzation routine.
 
 Acknowledgements & Related Work
 ================================
@@ -531,5 +530,5 @@ This package has adapted code from the following sources:
 - `Allen Lavoie's <https://github.com/allenlavoie>`_ Hessian-vector-product routines from `tensorflow`, available on github `here <https://github.com/tensorflow/tensorflow/commit/5b37e7ed14eb7dddae8a0e87435595347a315bb7>`_ under the Apache License version 2.
 
 There is also a related project `keras-opt <https://github.com/pedro-r-marques/keras-opt>`_ with the same goal but different implementation and API.
-The `kormos` package is recommended over `keras-opt` because its implementation is faster and more robust when training models with large memory requirements, it exposes all of the arguments to `scipy.optimize.minimize` if you wish to solve a constrained optimization problem, and is a little bit more seemless to use as part of the native `keras` workflow.
+The `kormos` package is recommended over `keras-opt` because its implementation is faster and more robust when training models with large memory requirements, it exposes all of the arguments to ``scipy.optimize.minimize`` if you wish to solve a constrained optimization problem, and is a little bit more seemless to use as part of the native `Keras` workflow.
 
