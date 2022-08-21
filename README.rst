@@ -12,10 +12,6 @@ It provides [peculiar] `keras` users with:
   - Support for distributed training strategies (at least in principle---this has admittedly not been integration tested)
 - The ability to use *second order* optimization methods from `scipy` by evaluating Hessian-vector-products if you have a very specific need for this (spoiler: you almost certainly do not)
 
-.. toctree::
-   :maxdepth: 2
-   :caption: Contents:
-
 
 Motivation
 -----------

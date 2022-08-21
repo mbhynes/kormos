@@ -1,5 +1,10 @@
 .. Import the body of this document from the repository README.
 
+.. toctree::
+   :maxdepth: 2
+   :caption: Contents:
+
+
 .. include:: ../../README.rst
 
 API Reference
