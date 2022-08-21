@@ -1,12 +1,12 @@
 .. image:: https://github.com/mbhynes/kormos/workflows/Tests/badge.svg
   :target: https://github.com/mbhynes/kormos/actions
 
-
 .. image:: https://readthedocs.org/projects/kormos/badge/?version=latest
   :target: https://kormos.readthedocs.io
 
 .. image:: https://img.shields.io/pypi/v/kormos
   :target: https://pypi.org/project/kormos
+
 
 Kormos
 =================================
