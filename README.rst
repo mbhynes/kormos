@@ -1,15 +1,17 @@
-.. raw:: html
+.. image:: https://github.com/mbhynes/kormos/workflows/Tests/badge.svg
+  :target: https://github.com/mbhynes/kormos/actions
 
-  <p align="left">
-  <a href="https://github.com/mbhynes/kormos/actions"><img alt="Tests" src="https://github.com/mbhynes/kormos/workflows/Tests/badge.svg"></a>
-  <a href="https://kormos.readthedocs.io"><img alt="Docs" src="https://readthedocs.org/projects/kormos/badge/?version=latest"></a>
-  <a href="https://pypi.org/project/kormos/"><img alt="PyPI" src="https://img.shields.io/pypi/v/kormos"></a>
-  </p>
+.. image:: https://readthedocs.org/projects/kormos/badge/?version=latest
+  :target: https://kormos.readthedocs.io
+
+.. image:: https://img.shields.io/pypi/v/kormos
+  :target: https://pypi.org/project/kormos
+
 
 Kormos
 =================================
 
-The `kormos` package provides an interface between `scipy.optimize.minimize <https://docs.scipy.org/doc/scipy/reference/generated/scipy.optimize.minimize.html>`_ and `Keras <https://keras.io>`_ for training models with deterministic minimization algorithms like `L-BFGS <https://en.wikipedia.org/wiki/Limited-memory_BFGS>`_.
+The `kormos` package provides an interface between `scipy.optimize.minimize <https://docs.scipy.org/doc/scipy/reference/generated/scipy.optimize.minimize.html>`_ and `Keras <https://keras.io>`_ for training models with deterministic minimization algorithms like L-BFGS.
 
 It provides `Keras` users with:
 
@@ -534,8 +536,8 @@ Acknowledgements & Related Work
 
 This package has adapted code from the following sources:
 
-- `Pi-Yueh Chuang's <https://pychao.com/contact-us-and-pgp-key/>`_ MIT-licensed `scipy.optimize.minimize_lbfgs` wrapper available on github `here <https://gist.github.com/piyueh/712ec7d4540489aad2dcfb80f9a54993>`_.
-- `Allen Lavoie's <https://github.com/allenlavoie>`_ Hessian-vector-product routines from `tensorflow`, available on github `here <https://github.com/tensorflow/tensorflow/commit/5b37e7ed14eb7dddae8a0e87435595347a315bb7>`_ under the Apache License version 2.
+- `Pi-Yueh Chuang's <https://pychao.com/contact-us-and-pgp-key/>`_ MIT-licensed `scipy.optimize.minimize_lbfgs` wrapper on `github here <https://gist.github.com/piyueh/712ec7d4540489aad2dcfb80f9a54993>`_.
+- `Allen Lavoie's <https://github.com/allenlavoie>`_ Hessian-vector-product routines from `tensorflow`, available in the `following commit <https://github.com/tensorflow/tensorflow/commit/5b37e7ed14eb7dddae8a0e87435595347a315bb7>`_ under the Apache License version 2.
 
 There is also a related project `keras-opt <https://github.com/pedro-r-marques/keras-opt>`_ with the same goal but different implementation and API.
 The `kormos` package is recommended over `keras-opt` because its implementation is faster and more robust when training models with large memory requirements, it exposes all of the arguments to ``scipy.optimize.minimize`` if you wish to solve a constrained optimization problem, and is a little bit more seemless to use as part of the native `Keras` workflow.
