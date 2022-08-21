@@ -67,7 +67,7 @@ The `kormos` package is built for:
 Installation
 ------------
 
-Install via the PyPI package [kormos](https://pypi.org/project/kormos/) using `pip`:
+Install via the PyPI package `kormos <https://pypi.org/project/kormos/>`_ using `pip`:
 
 .. code-block:: python
 
@@ -77,7 +77,7 @@ Alternatively, if you like your releases bloody rare you may install from `git` 
 
 .. code-block:: python
 
-  pip3 install git+https://github.com/mbhynes/kormos
+  pip3 install git+https://github.com/mbhynes/kormos.git
 
 Usage Examples
 ==============
